@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 /// One model row, e.g. `` `A1332`: iPhone 4 `` or `` `E2104` `E2105`: Xperia E4 ``
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     pub ids: Vec<String>,
     pub market_name: String,
 }
 
 /// A device entry parsed from the markdown: `**[`code`] name (`codename`):**`
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     /// Sequential id, also used as the usearch vector label.
     pub id: u32,

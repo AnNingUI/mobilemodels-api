@@ -10,7 +10,6 @@ const BY_CODE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_
 const BY_CODENAME: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_codename");
 const BY_BRAND: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_brand");
 const BY_SERIES: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_series");
-const VECTORS: TableDefinition<'static, u32, &[u8]> = TableDefinition::new("vectors");
 const META: TableDefinition<'static, &str, &str> = TableDefinition::new("meta");
 
 /// ASCII-lowercase key normalization (model ids / codenames / names are
@@ -27,11 +26,11 @@ pub struct KvStore {
 
 fn append_id(table: &mut redb::Table<'_, &str, &[u8]>, key: &str, id: u32) -> Result<()> {
     let mut list: Vec<u64> = match table.get(key)? {
-        Some(g) => bincode::decode_from_slice(g.value(), bincode::config::standard())?.0,
+        Some(g) => postcard::from_bytes(g.value())?,
         None => Vec::new(),
     };
     list.push(id as u64);
-    table.insert(key, bincode::encode_to_vec(&list, bincode::config::standard())?.as_slice())?;
+    table.insert(key, postcard::to_allocvec(&list)?.as_slice())?;
     Ok(())
 }
 
@@ -40,7 +39,9 @@ impl KvStore {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        Ok(Self { db: Database::create(path)? })
+        // 默认 8KB 页装不下 4KB 向量 → 每页浪费一半；32KB 页可装 7 个，文件显著缩小
+        let db = Database::builder().set_cache_size(64 * 1024 * 1024).create(path)?;
+        Ok(Self { db })
     }
 
     pub fn open(path: &Path) -> Result<Self> {
@@ -60,7 +61,7 @@ impl KvStore {
             let mut meta = wtx.open_table(META)?;
 
             for d in devices {
-                let bytes = bincode::encode_to_vec(d, bincode::config::standard())?;
+                let bytes = postcard::to_allocvec(d)?;
                 dev.insert(d.id, bytes.as_slice())?;
                 append_id(&mut by_name, &norm(&d.name), d.id)?;
                 if !d.code.is_empty() {
@@ -90,36 +91,16 @@ impl KvStore {
         Ok(())
     }
 
-    /// Persist embeddings (device_id -> vector) in the same redb file.
-    pub fn write_vectors(&self, vectors: &[(u32, Vec<f32>)]) -> Result<()> {
-        let wtx = self.db.begin_write()?;
-        {
-            let mut t = wtx.open_table(VECTORS)?;
-            for (id, v) in vectors {
-                t.insert(*id, bincode::encode_to_vec(v, bincode::config::standard())?.as_slice())?;
-            }
-        }
-        wtx.commit()?;
-        Ok(())
-    }
-
-    /// Read all persisted embeddings back (for rebuilding the HNSW graph).
-    pub fn read_vectors(&self) -> Result<Vec<(u32, Vec<f32>)>> {
-        let rtx = self.db.begin_read()?;
-        let t = rtx.open_table(VECTORS)?;
-        let mut out = Vec::with_capacity(t.len()? as usize);
-        for item in t.iter()? {
-            let (k, v) = item?;
-            out.push((k.value(), bincode::decode_from_slice::<Vec<f32>, _>(v.value(), bincode::config::standard())?.0));
-        }
-        Ok(out)
+    /// redb 是 COW 设计：写入会产生废弃页，文件膨胀；压缩回收。
+    pub fn compact(&mut self) -> Result<bool> {
+        Ok(self.db.compact()?)
     }
 
     pub fn get_device(&self, id: u32) -> Result<Option<Device>> {
         let rtx = self.db.begin_read()?;
         let table = rtx.open_table(DEVICES)?;
         match table.get(id)? {
-            Some(g) => Ok(Some(bincode::decode_from_slice(g.value(), bincode::config::standard())?.0)),
+            Some(g) => Ok(Some(postcard::from_bytes(g.value())?)),
             None => Ok(None),
         }
     }
@@ -131,7 +112,7 @@ impl KvStore {
         let mut out = Vec::with_capacity(table.len()? as usize);
         for item in table.iter()? {
             let (_, v) = item?;
-            out.push(bincode::decode_from_slice(v.value(), bincode::config::standard())?.0);
+            out.push(postcard::from_bytes(v.value())?);
         }
         Ok(out)
     }
@@ -140,7 +121,7 @@ impl KvStore {
         let rtx = self.db.begin_read()?;
         let table = rtx.open_table(TableDefinition::<&str, &[u8]>::new(table_name))?;
         match table.get(key)? {
-            Some(g) => Ok(bincode::decode_from_slice(g.value(), bincode::config::standard())?.0),
+            Some(g) => Ok(postcard::from_bytes(g.value())?),
             None => Ok(Vec::new()),
         }
     }
@@ -195,7 +176,7 @@ impl KvStore {
                 if s.to_lowercase().contains(&sub)
                     && brand.map(|bq| b == bq).unwrap_or(true)
                 {
-                    out.extend(bincode::decode_from_slice::<Vec<u64>, _>(v.value(), bincode::config::standard())?.0);
+                    out.extend(postcard::from_bytes::<Vec<u64>>(v.value())?);
                 }
             }
         }
@@ -215,7 +196,7 @@ impl KvStore {
         let mut per_brand: Vec<(String, u64)> = Vec::new();
         for item in brand.iter()? {
             let (k, g) = item?;
-            let n: Vec<u64> = bincode::decode_from_slice(g.value(), bincode::config::standard())?.0;
+            let n: Vec<u64> = postcard::from_bytes(g.value())?;
             per_brand.push((k.value().to_string(), n.len() as u64));
         }
         per_brand.sort_by(|a, b| b.1.cmp(&a.1));

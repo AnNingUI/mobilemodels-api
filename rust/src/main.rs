@@ -116,26 +116,15 @@ fn cmd_build(args: &[String]) -> Result<()> {
     }
     println!("\nparsed {} devices total", devices.len());
 
-    let kv = kv::KvStore::create(&kv_path)?;
+    let mut kv = kv::KvStore::create(&kv_path)?;
     kv.build(&devices)?;
     println!("KV written  -> {}", kv_path.display());
 
-    // Embed everything and persist the vectors in the KV file.
-    let vectors: Vec<(u32, Vec<f32>)> = devices
-        .iter()
-        .map(|d| (d.id, embed::embed(&d.search_text())))
-        .collect();
-    kv.write_vectors(&vectors)?;
-    println!(
-        "vectors done -> {} ({} vectors x {} dims)",
-        kv_path.display(),
-        vectors.len(),
-        embed::DIM
-    );
-
-    // Warm-build the HNSW index once to prove the graph builds cleanly.
-    let idx = vector::VectorIndex::build(&vectors)?;
-    println!("HNSW index    -> {} nodes (hnsw_rs, DistCosine)", idx.size());
+    // 向量为确定性函数，不落盘：启动时由设备文本现算（51k 条约 5 秒）
+    let compacted = kv.compact()?;
+    if compacted {
+        println!("redb compacted (file shrunk)");
+    }
 
     let s = kv.stats()?;
     println!(
@@ -278,10 +267,14 @@ fn cmd_search(args: &[String]) -> Result<()> {
 
     let (kv_path, _) = data_paths(&data_dir);
     let kv = kv::KvStore::open(&kv_path)?;
-    let vectors = kv.read_vectors()?;
-    if vectors.is_empty() {
-        anyhow::bail!("no vectors in {} — run `build` first", kv_path.display());
+    let devices = kv.all_devices()?;
+    if devices.is_empty() {
+        anyhow::bail!("no devices in {} — run `build` first", kv_path.display());
     }
+    let vectors: Vec<(u32, Vec<f32>)> = devices
+        .iter()
+        .map(|d| (d.id, embed::embed(&d.search_text())))
+        .collect();
     let idx = vector::VectorIndex::build(&vectors)?;
 
     let q = embed::embed(&text);
@@ -358,13 +351,17 @@ fn cmd_serve(args: &[String]) -> Result<()> {
 
     let (kv_path, _) = data_paths(&data_dir);
     let kv = kv::KvStore::open(&kv_path)?;
-    let vectors = kv.read_vectors()?;
-    if vectors.is_empty() {
-        eprintln!("warning: no vectors in {} — empty dataset, search will return nothing", kv_path.display());
-    }
     let started = std::time::Instant::now();
+    let devices = kv.all_devices()?;
+    let vectors: Vec<(u32, Vec<f32>)> = devices
+        .iter()
+        .map(|d| (d.id, embed::embed(&d.search_text())))
+        .collect();
+    if vectors.is_empty() {
+        eprintln!("warning: empty dataset — search will return nothing");
+    }
     let index = vector::VectorIndex::build(&vectors)?;
-    println!("HNSW index ready: {} nodes in {:?}", index.size(), started.elapsed());
+    println!("embeddings + HNSW index ready: {} nodes in {:?}", index.size(), started.elapsed());
 
     let state = std::sync::Arc::new(server::AppState { kv, index });
     let rt = tokio::runtime::Builder::new_multi_thread()

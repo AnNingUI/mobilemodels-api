@@ -1,17 +1,17 @@
 use crate::model::Device;
 use anyhow::Result;
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::path::Path;
 
-const DEVICES: TableDefinition<u32, &[u8]> = TableDefinition::new("devices");
-const BY_MODEL_ID: TableDefinition<&str, &[u8]> = TableDefinition::new("by_model_id");
-const BY_NAME: TableDefinition<&str, &[u8]> = TableDefinition::new("by_name");
-const BY_CODE: TableDefinition<&str, &[u8]> = TableDefinition::new("by_code");
-const BY_CODENAME: TableDefinition<&str, &[u8]> = TableDefinition::new("by_codename");
-const BY_BRAND: TableDefinition<&str, &[u8]> = TableDefinition::new("by_brand");
-const BY_SERIES: TableDefinition<&str, &[u8]> = TableDefinition::new("by_series");
-const VECTORS: TableDefinition<u32, &[u8]> = TableDefinition::new("vectors");
-const META: TableDefinition<&str, &str> = TableDefinition::new("meta");
+const DEVICES: TableDefinition<'static, u32, &[u8]> = TableDefinition::new("devices");
+const BY_MODEL_ID: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_model_id");
+const BY_NAME: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_name");
+const BY_CODE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_code");
+const BY_CODENAME: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_codename");
+const BY_BRAND: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_brand");
+const BY_SERIES: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_series");
+const VECTORS: TableDefinition<'static, u32, &[u8]> = TableDefinition::new("vectors");
+const META: TableDefinition<'static, &str, &str> = TableDefinition::new("meta");
 
 /// ASCII-lowercase key normalization (model ids / codenames / names are
 /// case-insensitive in practice: A1332 == a1332, X1 == x1).
@@ -27,11 +27,11 @@ pub struct KvStore {
 
 fn append_id(table: &mut redb::Table<'_, &str, &[u8]>, key: &str, id: u32) -> Result<()> {
     let mut list: Vec<u64> = match table.get(key)? {
-        Some(g) => bincode::deserialize(g.value())?,
+        Some(g) => bincode::decode_from_slice(g.value(), bincode::config::standard())?.0,
         None => Vec::new(),
     };
     list.push(id as u64);
-    table.insert(key, bincode::serialize(&list)?.as_slice())?;
+    table.insert(key, bincode::encode_to_vec(&list, bincode::config::standard())?.as_slice())?;
     Ok(())
 }
 
@@ -60,7 +60,7 @@ impl KvStore {
             let mut meta = wtx.open_table(META)?;
 
             for d in devices {
-                let bytes = bincode::serialize(d)?;
+                let bytes = bincode::encode_to_vec(d, bincode::config::standard())?;
                 dev.insert(d.id, bytes.as_slice())?;
                 append_id(&mut by_name, &norm(&d.name), d.id)?;
                 if !d.code.is_empty() {
@@ -96,7 +96,7 @@ impl KvStore {
         {
             let mut t = wtx.open_table(VECTORS)?;
             for (id, v) in vectors {
-                t.insert(*id, bincode::serialize(v)?.as_slice())?;
+                t.insert(*id, bincode::encode_to_vec(v, bincode::config::standard())?.as_slice())?;
             }
         }
         wtx.commit()?;
@@ -110,7 +110,7 @@ impl KvStore {
         let mut out = Vec::with_capacity(t.len()? as usize);
         for item in t.iter()? {
             let (k, v) = item?;
-            out.push((k.value(), bincode::deserialize::<Vec<f32>>(v.value())?));
+            out.push((k.value(), bincode::decode_from_slice::<Vec<f32>, _>(v.value(), bincode::config::standard())?.0));
         }
         Ok(out)
     }
@@ -119,7 +119,7 @@ impl KvStore {
         let rtx = self.db.begin_read()?;
         let table = rtx.open_table(DEVICES)?;
         match table.get(id)? {
-            Some(g) => Ok(Some(bincode::deserialize(g.value())?)),
+            Some(g) => Ok(Some(bincode::decode_from_slice(g.value(), bincode::config::standard())?.0)),
             None => Ok(None),
         }
     }
@@ -131,7 +131,7 @@ impl KvStore {
         let mut out = Vec::with_capacity(table.len()? as usize);
         for item in table.iter()? {
             let (_, v) = item?;
-            out.push(bincode::deserialize(v.value())?);
+            out.push(bincode::decode_from_slice(v.value(), bincode::config::standard())?.0);
         }
         Ok(out)
     }
@@ -140,7 +140,7 @@ impl KvStore {
         let rtx = self.db.begin_read()?;
         let table = rtx.open_table(TableDefinition::<&str, &[u8]>::new(table_name))?;
         match table.get(key)? {
-            Some(g) => Ok(bincode::deserialize(g.value())?),
+            Some(g) => Ok(bincode::decode_from_slice(g.value(), bincode::config::standard())?.0),
             None => Ok(Vec::new()),
         }
     }
@@ -195,7 +195,7 @@ impl KvStore {
                 if s.to_lowercase().contains(&sub)
                     && brand.map(|bq| b == bq).unwrap_or(true)
                 {
-                    out.extend(bincode::deserialize::<Vec<u64>>(v.value())?);
+                    out.extend(bincode::decode_from_slice::<Vec<u64>, _>(v.value(), bincode::config::standard())?.0);
                 }
             }
         }
@@ -215,7 +215,7 @@ impl KvStore {
         let mut per_brand: Vec<(String, u64)> = Vec::new();
         for item in brand.iter()? {
             let (k, g) = item?;
-            let n: Vec<u64> = bincode::deserialize(g.value())?;
+            let n: Vec<u64> = bincode::decode_from_slice(g.value(), bincode::config::standard())?.0;
             per_brand.push((k.value().to_string(), n.len() as u64));
         }
         per_brand.sort_by(|a, b| b.1.cmp(&a.1));

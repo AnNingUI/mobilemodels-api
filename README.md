@@ -80,17 +80,18 @@ mobilemodels-db build --data-dir data --source brands
 
 | 数据类别 | 来源 | 授权情况 |
 |---|---|---|
-| Android 机型 + codename（全品牌） | Google Play 官方设备兼容列表 | Google 公开发布的事实数据，✅ 已实现 |
-| **Apple（A 编号 ↔ 机型）** | Wikipedia: List of iPhone models | CC BY-SA（可商用，需署名+同协议），✅ 已实现 |
-| **华为 / 鸿蒙（含 codename/型号）** | Wikipedia: List of Huawei phones | CC BY-SA，✅ 已实现 |
-| 荣耀（鸿蒙系） | Wikipedia: List of Honor phones | CC BY-SA，✅ 已实现 |
+| Android 机型 + codename（全品牌） | Google Play 官方设备兼容列表 | Google 公开发布的事实数据，✅ 已实现（5 万+ 台） |
+| **Apple（A 编号 ↔ 机型）** | Apple 官方支持页（HT201296） | 官方事实数据，大陆可直连，✅ 已实现（37 台，含 iPhone 17 系） |
+| **华为 / 鸿蒙（含型号）** | Wikipedia: List of Huawei products | CC BY-SA（可商用），✅ 已实现（158 台，Ascend/Y/Nova/Enjoy 系） |
 | 国行进网型号 ID | 工信部 TENAA / 3C 认证 | 官方备案记录（事实），🕐 计划中 |
+| Apple 老机型 A 编号（2016 前） | Apple 官网/FCC 备案 | 官方事实，🕐 计划中 |
 
 ⚠️ 原则：只用官方/CC0/CC-BY-SA 一手来源；**不要**抓取 GSMArena 等 ToS 禁止批量抓取的聚合站；
 不要复制第三方项目的文件编排（用自有 JSON 格式）。
 
-> 注：Wikipedia 在大陆网络不可达，维基源收集在每日 GitHub Actions（US 运行器）中自动执行，
-> 本地执行会报连接超时（属预期）。维基解析器有单测覆盖（`cargo test`）。
+> 注：Wikipedia 在大陆网络不可达，本地可设代理（如 `HTTPS_PROXY=http://127.0.0.1:7890`）
+> 或交给每日 GitHub Actions（US 运行器）自动执行。Apple 官方源大陆可直连，无需代理。
+> 所有解析器均有单测覆盖（`cargo test`）。
 
 ## HTTP API
 

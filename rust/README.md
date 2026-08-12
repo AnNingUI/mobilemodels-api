@@ -32,9 +32,8 @@ cargo +stable build --release   # 需要 stable（nightly 在部分 crate 上有
 B=./target/release/mobilemodels-db
 
 $B collect --source google-play --out ../brands     # Google Play 官方列表（每日可跑）
-$B collect --source wikipedia-apple --out ../brands  # Apple（Wikipedia，需外网）
-$B collect --source wikipedia-huawei --out ../brands # 华为/鸿蒙（Wikipedia）
-$B collect --source wikipedia-honor --out ../brands  # 荣耀（Wikipedia）
+$B collect --source apple --out ../brands           # Apple 官方支持页（大陆直连）
+$B collect --source wikipedia-huawei --out ../brands # 华为/鸿蒙（Wikipedia，需外网/代理）
 $B build --data-dir ../data --source ../examples   # 示例 JSON 数据建库（<1s）
 $B query model MP-1000 --data-dir ../data          # 型号精确查询
 $B query codename my_phone_1 --data-dir ../data
@@ -46,8 +45,8 @@ $B serve --data-dir ../data --port 8080            # HTTP API
 ```
 
 `--source` 指定 JSON 数据文件/目录（默认当前目录），`--data-dir` 指定数据库输出目录；
-`collect` 支持 `--source google-play | wikipedia-apple | wikipedia-huawei | wikipedia-honor`、`--limit N`（调试用）。
-Wikipedia 源需外网（大陆本地不可达），由每日 GitHub Actions 执行；解析逻辑有单测覆盖。
+`collect` 支持 `--source google-play | apple | wikipedia-huawei`、`--limit N`（调试用）。
+Wikipedia 源需外网（大陆本地可用代理，如 `HTTPS_PROXY=http://127.0.0.1:7890`），由每日 GitHub Actions 兜底；解析逻辑有单测覆盖。
 
 ## HTTP API
 

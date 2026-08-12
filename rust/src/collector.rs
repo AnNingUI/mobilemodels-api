@@ -121,44 +121,60 @@ pub fn collect_google_play(out_path: &Path, limit: Option<usize>) -> Result<usiz
 // 页面: List_of_iPhone_models / List_of_Huawei_phones / List_of_Honor_phones
 // ---------------------------------------------------------------------------
 
-/// Decode HTML entities (named common ones + numeric).
+/// Decode HTML entities (named common ones + numeric). Char-aware (UTF-8 safe).
 fn unescape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(end) = s[i..].find(';') {
-                let ent = &s[i + 1..i + end];
-                let c = match ent {
-                    "amp" => Some('&'),
-                    "lt" => Some('<'),
-                    "gt" => Some('>'),
-                    "quot" => Some('"'),
-                    "apos" => Some('\''),
-                    "nbsp" => Some(' '),
-                    "ndash" => Some('–'),
-                    "mdash" => Some('—'),
-                    "middot" => Some('·'),
-                    _ => {
-                        if let Some(hex) = ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X")) {
-                            u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
-                        } else if let Some(dec) = ent.strip_prefix('#') {
-                            dec.parse::<u32>().ok().and_then(char::from_u32)
-                        } else {
-                            None
-                        }
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            out.push(c);
+            continue;
+        }
+        let mut ent = String::new();
+        let mut found = false;
+        while let Some(&n) = chars.peek() {
+            if n == ';' {
+                chars.next();
+                found = true;
+                break;
+            }
+            ent.push(n);
+            chars.next();
+        }
+        let decoded = if found {
+            match ent.as_str() {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                "ndash" => Some('–'),
+                "mdash" => Some('—'),
+                "middot" => Some('·'),
+                _ => {
+                    if let Some(hex) = ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X")) {
+                        u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+                    } else if let Some(dec) = ent.strip_prefix('#') {
+                        dec.parse::<u32>().ok().and_then(char::from_u32)
+                    } else {
+                        None
                     }
-                };
-                if let Some(c) = c {
-                    out.push(c);
-                    i += end + 1;
-                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        match decoded {
+            Some(c) => out.push(c),
+            None => {
+                out.push('&');
+                out.push_str(&ent);
+                if found {
+                    out.push(';');
                 }
             }
         }
-        out.push(bytes[i] as char);
-        i += 1;
     }
     out
 }
@@ -242,7 +258,7 @@ pub fn extract_from_tables(
     for table in tables {
         let Some(header_row) = table.first() else { continue };
         let name_col = col_index(header_row, &["model"]);
-        let modelnum_col = col_index(header_row, &["model number", "model no"]);
+        let modelnum_col = col_index(header_row, &["model number", "model no", "version"]);
         let codename_col = col_index(header_row, &["codename", "code name"]);
         if name_col.is_none() && modelnum_col.is_none() {
             continue;
@@ -276,6 +292,10 @@ pub fn extract_from_tables(
                         .collect();
                     ids.sort();
                     ids.dedup();
+                    if ids.is_empty() {
+                        // 无 A 编号的行（日期/版本说明等）不是设备，跳过
+                        continue;
+                    }
                     (ids, name.clone())
                 }
                 _ => {
@@ -331,7 +351,14 @@ pub fn collect_wikipedia(
 ) -> Result<usize> {
     let url = format!("{WIKI_API}?action=parse&page={page}&prop=text&format=json&formatversion=2");
     println!("fetching {page} (Wikipedia) ...");
-    let resp = reqwest::blocking::get(&url)
+    // Wikipedia 政策：必须带描述性 User-Agent，否则 403
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
+        .build()
+        .context("build http client")?;
+    let resp = client
+        .get(&url)
+        .send()
         .with_context(|| format!("GET wikipedia page {page}"))?
         .error_for_status()?;
     let text = resp.text()?;
@@ -342,6 +369,107 @@ pub fn collect_wikipedia(
     let tables = parse_wiki_tables(html);
     println!("  parsed {} wikitables", tables.len());
     let devices = extract_from_tables(&tables, brand, kind, limit);
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
+    Ok(devices.len())
+}
+
+// ---------------------------------------------------------------------------
+// Apple 官方支持页（HT201296: Identify your iPhone model）
+// 结构: <h2 class="gb-header">iPhone 15 Pro Max</h2> ... "Model numbers: A2849 (...), A3105 (...)"
+// 官方事实数据；大陆网络可直连（无需代理）。
+// ---------------------------------------------------------------------------
+
+/// Earliest occurrence of either marker (byte index).
+fn next_marker(s: &str) -> Option<usize> {
+    let g = s.find("gb-header");
+    let m = s.find("Model numbers:");
+    match (g, m) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Parse the Apple support page HTML into (name, Vec<A-numbers>).
+/// Single pass: track the last `<h2 class="gb-header">NAME</h2>`; whenever a
+/// "Model numbers:" text block appears, attach its A-numbers to that name.
+pub fn parse_apple_support(html: &str) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let mut header: Option<String> = None;
+    let mut seen = HashSet::new();
+    let mut rest = html;
+    while let Some(i) = next_marker(rest) {
+        if rest[i..].starts_with("gb-header") {
+            let seg = &rest[i..];
+            let after = match seg.find('>') {
+                Some(p) => p + 1,
+                None => break,
+            };
+            let text_end = match seg[after..].find('<') {
+                Some(p) => after + p,
+                None => break,
+            };
+            let name = strip_tags(&seg[after..text_end]).trim().to_string();
+            if !name.is_empty() {
+                header = Some(name);
+            }
+            rest = &rest[i + 8..];
+        } else {
+            let seg = &rest[i..];
+            let end = seg.find('<').unwrap_or(seg.len());
+            let text = strip_tags(&seg[..end]);
+            let mut ids: Vec<String> = text
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .filter(|t| {
+                    let t = t.trim();
+                    t.len() == 5 && t.starts_with('A') && t[1..].chars().all(|c| c.is_ascii_digit())
+                })
+                .map(|t| t.to_string())
+                .collect();
+            ids.sort();
+            ids.dedup();
+            if let Some(name) = header.clone() {
+                if !ids.is_empty() && name.contains("iPhone") {
+                    let key = (name.clone(), ids.join("|"));
+                    if seen.insert(key) {
+                        out.push((name, ids));
+                    }
+                }
+            }
+            rest = &rest[i + 1..];
+        }
+    }
+    out
+}
+
+/// Fetch Apple's official "Identify your iPhone model" page and write JSON.
+pub fn collect_apple_support(out_path: &Path, limit: Option<usize>) -> Result<usize> {
+    let url = "https://support.apple.com/en-us/HT201296";
+    println!("fetching {url} ...");
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
+        .build()
+        .context("build http client")?;
+    let resp = client
+        .get(url)
+        .send()
+        .context("GET apple support page")?
+        .error_for_status()?;
+    let html = resp.text()?;
+    let pairs = parse_apple_support(&html);
+    let devices: Vec<Value> = pairs
+        .into_iter()
+        .take(limit.unwrap_or(usize::MAX))
+        .map(|(name, ids)| {
+            json!({
+                "brand": "Apple",
+                "name": name,
+                "models": [{ "ids": ids, "market_name": name }],
+            })
+        })
+        .collect();
     if let Some(dir) = out_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -398,5 +526,24 @@ mod tests {
         assert_eq!(devices[0]["codename"], "VOG-L29");
         assert_eq!(devices[0]["models"][0]["ids"][0], "VOG-L29");
         assert_eq!(devices[1]["name"], "Huawei Mate 60 Pro");
+    }
+
+    pub(crate) const APPLE_SUPPORT_FIXTURE: &str = r#"<div><h2 class="gb-header">iPhone 15 Pro Max</h2>
+<p>Model numbers: A2849 (United States, Puerto Rico), A3105 (Canada), A3108 (China mainland)</p>
+<h2 class="gb-header">iPhone 15</h2>
+<p>Model numbers: A3089, A3092, A3090</p>
+<h2 class="gb-header">iPhone SE (2nd generation)</h2>
+<p>Model numbers: A2275 (United States)</p>
+<p>Find the model number on the back: A1234 example text</p>"#;
+
+    #[test]
+    fn parse_apple_support_fixture() {
+        let pairs = parse_apple_support(super::tests::APPLE_SUPPORT_FIXTURE);
+        assert_eq!(pairs.len(), 3, "instruction text without a header must be skipped");
+        let (name, ids) = &pairs[0];
+        assert_eq!(name, "iPhone 15 Pro Max");
+        assert_eq!(ids, &vec!["A2849".to_string(), "A3105".to_string(), "A3108".to_string()]);
+        assert_eq!(pairs[1].0, "iPhone 15");
+        assert_eq!(pairs[2].0, "iPhone SE (2nd generation)");
     }
 }

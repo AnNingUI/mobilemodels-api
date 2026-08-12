@@ -161,23 +161,19 @@ fn cmd_collect(args: &[String]) -> Result<()> {
             let n = collector::collect_google_play(&path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
-        "wikipedia-apple" => {
-            let path = PathBuf::from(&out).join("wikipedia-apple.json");
-            let n = collector::collect_wikipedia("List_of_iPhone_models", "Apple", "apple", &path, limit)?;
+        "apple" => {
+            // Apple 官方支持页（大陆可直连）
+            let path = PathBuf::from(&out).join("apple.json");
+            let n = collector::collect_apple_support(&path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
         "wikipedia-huawei" => {
             let path = PathBuf::from(&out).join("wikipedia-huawei.json");
-            let n = collector::collect_wikipedia("List_of_Huawei_phones", "Huawei", "huawei", &path, limit)?;
-            println!("collected {n} devices -> {}", path.display());
-        }
-        "wikipedia-honor" => {
-            let path = PathBuf::from(&out).join("wikipedia-honor.json");
-            let n = collector::collect_wikipedia("List_of_Honor_phones", "Honor", "huawei", &path, limit)?;
+            let n = collector::collect_wikipedia("List_of_Huawei_products", "Huawei", "huawei", &path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
         other => anyhow::bail!(
-            "unknown source `{other}` (available: google-play, wikipedia-apple, wikipedia-huawei, wikipedia-honor)"
+            "unknown source `{other}` (available: google-play, apple, wikipedia-huawei)"
         ),
     }
     Ok(())

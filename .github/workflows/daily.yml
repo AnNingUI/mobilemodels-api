@@ -23,13 +23,12 @@ jobs:
       - name: collect from Google Play (official device list)
         run: ./rust/target/release/mobilemodels-db collect --source google-play --out brands
 
-      # Wikipedia（CC BY-SA）：GitHub US 运行器可访问；大陆网络不可达
-      - name: collect Apple (Wikipedia)
-        run: ./rust/target/release/mobilemodels-db collect --source wikipedia-apple --out brands
+      # Apple 官方支持页（大陆可直连）
+      - name: collect Apple (official support page)
+        run: ./rust/target/release/mobilemodels-db collect --source apple --out brands
+      # Wikipedia（CC BY-SA）：CI US 运行器可访问
       - name: collect Huawei / HarmonyOS (Wikipedia)
         run: ./rust/target/release/mobilemodels-db collect --source wikipedia-huawei --out brands
-      - name: collect Honor (Wikipedia)
-        run: ./rust/target/release/mobilemodels-db collect --source wikipedia-honor --out brands
 
       - name: rebuild redb KV + HNSW index
         run: ./rust/target/release/mobilemodels-db build --data-dir data --source brands

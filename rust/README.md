@@ -31,6 +31,7 @@ cargo +stable build --release   # 需要 stable（nightly 在部分 crate 上有
 ```bash
 B=./target/release/mobilemodels-db
 
+$B collect --source google-play --out ../brands     # 从 Google Play 官方列表抓取（每日可跑）
 $B build --data-dir ../data --source ../examples   # 示例 JSON 数据建库（<1s）
 $B query model MP-1000 --data-dir ../data          # 型号精确查询
 $B query codename my_phone_1 --data-dir ../data
@@ -41,7 +42,8 @@ $B export ../data/devices.json --data-dir ../data
 $B serve --data-dir ../data --port 8080            # HTTP API
 ```
 
-`--source` 指定数据目录（默认当前目录），`--data-dir` 指定数据库输出目录。
+`--source` 指定 JSON 数据文件/目录（默认当前目录），`--data-dir` 指定数据库输出目录；
+`collect` 支持 `--source google-play`（官方设备列表，含 codename）、`--limit N`（调试用）。
 
 ## HTTP API
 

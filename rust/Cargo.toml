@@ -14,6 +14,7 @@ hnsw_rs = "0.3"
 anndists = "0.1"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [profile.release]
 # NOTE: avoid linker-plugin-lto + codegen-units=1 — it triggers a rustc ICE

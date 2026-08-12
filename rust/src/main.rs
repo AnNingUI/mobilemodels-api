@@ -1,3 +1,4 @@
+mod collector;
 mod embed;
 mod kv;
 mod model;
@@ -19,6 +20,7 @@ fn usage() -> ! {
 USAGE:
   mobilemodels-db build [--data-dir DIR] [--source PATH]      # parse JSON -> KV + vector index
                                                                # --source: JSON 文件或含 *.json 的目录（默认当前目录）
+  mobilemodels-db collect [--source google-play] [--out DIR] [--limit N]
   mobilemodels-db query <model|code|codename|name|brand|series> <KEY> [SERIES] [--data-dir DIR]
   mobilemodels-db search <TEXT> [-k N] [--brand NAME] [--data-dir DIR]
   mobilemodels-db export <file.json> [--data-dir DIR]
@@ -53,6 +55,7 @@ fn main() {
     }
     let result = match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
+        "collect" => cmd_collect(&args[2..]),
         "query" => cmd_query(&args[2..]),
         "search" => cmd_search(&args[2..]),
         "export" => cmd_export(&args[2..]),
@@ -139,6 +142,27 @@ fn cmd_build(args: &[String]) -> Result<()> {
         "stats: devices={} model_ids={} codenames={} built_at={}",
         s.devices, s.model_ids, s.codenames, s.built_at
     );
+    Ok(())
+}
+
+/// Daily collection from legal public sources -> standard JSON input files.
+fn cmd_collect(args: &[String]) -> Result<()> {
+    let (out, rest) = take_flag(args, "--out", "brands");
+    let (limit_str, rest) = take_flag(&rest, "--limit", "");
+    let (source, _) = take_flag(&rest, "--source", "google-play");
+    let limit = if limit_str.is_empty() {
+        None
+    } else {
+        Some(limit_str.parse::<usize>().map_err(|_| anyhow::anyhow!("invalid limit: {limit_str}"))?)
+    };
+    match source.as_str() {
+        "google-play" => {
+            let path = PathBuf::from(&out).join("google-play.json");
+            let n = collector::collect_google_play(&path, limit)?;
+            println!("collected {n} devices -> {}", path.display());
+        }
+        other => anyhow::bail!("unknown source `{other}` (available: google-play)"),
+    }
     Ok(())
 }
 

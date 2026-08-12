@@ -1,0 +1,36 @@
+name: daily-collect
+
+on:
+  schedule:
+    # 每天 18:00 UTC = 北京时间 02:00（凌晨低峰）
+    - cron: "0 18 * * *"
+  workflow_dispatch: {} # 支持手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: build binary
+        run: cargo build --release --manifest-path rust/Cargo.toml
+
+      - name: collect from Google Play (official device list)
+        run: ./rust/target/release/mobilemodels-db collect --source google-play --out brands
+
+      - name: rebuild redb KV + HNSW index
+        run: ./rust/target/release/mobilemodels-db build --data-dir data --source brands
+
+      - name: export structured json
+        run: ./rust/target/release/mobilemodels-db export data/devices.json --data-dir data
+
+      - name: commit data refresh
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(daily): refresh data from Google Play"
+          file_pattern: brands/

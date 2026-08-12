@@ -60,6 +60,34 @@ curl "localhost:8080/search?q=MyPhone%20Two&k=5"    # 语义检索
 建库：`mobilemodels-db build --data-dir data --source brands`
 （`--source` 可指向单个 `.json` 文件或含多个 `.json` 的目录，默认当前目录）。
 
+## 数据来源（每日自动搜集，合法）
+
+`collect` 命令从**公开一手来源**抓取事实数据（型号编号 / codename / 品牌 / 市场名均为事实，不受版权保护），
+输出为标准 JSON 输入格式，直接喂给 `build`：
+
+```bash
+mobilemodels-db collect --source google-play --out brands   # Google Play 官方设备列表（5 万+ 台，含 codename）
+mobilemodels-db build --data-dir data --source brands
+```
+
+### 每日凌晨自动运行
+
+- **GitHub Actions（免费）**：仓库自带 `.github/workflows/daily.yml`，每天 02:00（北京时间）自动
+  抓取 → 建库 → 提交更新。推送到 GitHub 即生效，也可 `workflow_dispatch` 手动触发。
+- **本地**：`scripts/daily.sh` 配 cron（`0 18 * * *`）或 Windows 任务计划程序（每天 02:00）。
+
+### 合法来源清单（对应数据类型）
+
+| 数据类别 | 来源 | 授权情况 |
+|---|---|---|
+| Android 机型 + codename（全品牌） | Google Play 官方设备兼容列表 | Google 公开发布的事实数据，✅ 已实现 |
+| 国行进网型号 ID | 工信部 TENAA / 3C 认证 | 官方备案记录（事实），🕐 计划中 |
+| Apple A 编号 ↔ 机型 | Apple 官网技术规格 / FCC 备案 | 官方事实，🕐 计划中 |
+| 各品牌机型 / 代号 | Wikipedia / Wikidata | CC BY-SA（可商用）/ CC0，🕐 计划中 |
+
+⚠️ 原则：只用官方/CC0/CC-BY-SA 一手来源；**不要**抓取 GSMArena 等 ToS 禁止批量抓取的聚合站；
+不要复制第三方项目的文件编排（用自有 JSON 格式）。
+
 ## HTTP API
 
 | 端点 | 说明 |

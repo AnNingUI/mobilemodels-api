@@ -30,7 +30,7 @@ jobs:
       - name: strip binary
         run: strip rust/target/release/mobilemodels-db || true
 
-      - name: publish binary to GitHub Release (tag: latest)
+      - name: "publish binary to GitHub Release (tag: latest)"
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest

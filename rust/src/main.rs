@@ -34,6 +34,10 @@ Run from the repository root (or pass --data-dir). Default DIR = data/
 }
 
 fn main() {
+    // reqwest 0.13 的 rustls-no-provider 需要显式安装 crypto provider（ring）。
+    // 必须在任何网络请求（collect）之前执行。
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Piping into `head`/`cut` closes stdout early — that's a normal CLI
     // condition, not a bug. Swallow the stdio panic it triggers.
     std::panic::set_hook(Box::new(|info| {

@@ -574,6 +574,206 @@ pub fn extract_apple_columns(tables: &[Vec<Vec<(bool, String)>>]) -> Vec<Value> 
     devices
 }
 
+// ---------------------------------------------------------------------------
+// 工信部电信设备进网许可（TENAA）—— 国行手机进网型号权威数据
+// 新站点: https://jwxk.miit.gov.cn（旧 tenaa.com.cn 已停用）
+// 接口: /dev-api-20/internetService/CertificateQuery
+//   按设备名称子串查询（所有手机证书名均含"移动电话机"），分页遍历全量。
+// 响应记录: applyOrg(生产企业) / equipmentModel(进网型号) / equipmentName(设备类别名)
+//          / licenseNo(许可证编号) / regDate / endDate
+// ---------------------------------------------------------------------------
+
+const TENAA_API: &str =
+    "https://jwxk.miit.gov.cn/dev-api-20/internetService/CertificateQuery";
+
+/// 生产企业(法人名) → 品牌名 归一化（包含匹配，未命中保留原名）。
+fn normalize_cn_brand(org: &str) -> String {
+    let rules = [
+        ("小米", "小米"),
+        ("华为", "华为"),
+        ("OPPO", "OPPO"),
+        ("维沃", "vivo"),
+        ("荣耀", "荣耀"),
+        ("中兴", "中兴"),
+        ("努比亚", "努比亚"),
+        ("三星", "三星"),
+        ("苹果", "Apple"),
+        ("诺基亚", "诺基亚"),
+        ("摩托罗拉", "摩托罗拉"),
+        ("联想", "联想"),
+        ("索尼", "索尼"),
+        ("魅族", "魅族"),
+        ("一加", "一加"),
+        ("真我", "真我"),
+        ("酷派", "酷派"),
+        ("TCL", "TCL"),
+        ("金立", "金立"),
+        ("360", "360"),
+    ];
+    for (key, brand) in rules {
+        if org.contains(key) {
+            return brand.to_string();
+        }
+    }
+    org.to_string()
+}
+
+/// Collect ALL Chinese phone network-access certificates (进网许可) by
+/// **date-window recursion**: the API caps any single query at 30 records and
+/// pagination beyond that fails, so we bisect the date range until each window
+/// holds <= 30 records. ~44k records => ~1500 leaf queries.
+pub fn collect_tenaa(out_path: &Path, max_devices: Option<usize>, delay_ms: u64) -> Result<usize> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
+        .build()
+        .context("build http client")?;
+    let mut devices: Vec<Value> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut queries = 0usize;
+    let (start, end) = ("2000-01-01", "2026-12-31");
+
+    tenaa_window(
+        &client, start, end, &mut devices, &mut seen, delay_ms, max_devices, &mut queries, 0,
+    )?;
+    println!("  total queries: {queries}");
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
+    Ok(devices.len())
+}
+
+fn tenaa_window(
+    client: &reqwest::blocking::Client,
+    start: &str,
+    end: &str,
+    devices: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+    delay_ms: u64,
+    max_devices: Option<usize>,
+    queries: &mut usize,
+    depth: usize,
+) -> Result<()> {
+    if max_devices.map(|m| devices.len() >= m).unwrap_or(false) {
+        return Ok(());
+    }
+    if *queries >= 6000 || depth > 20 {
+        // 防失控保护（服务端异常时）
+        return Ok(());
+    }
+    *queries += 1;
+    let url = format!(
+        "{TENAA_API}?isphoto=0&pageNo=1&pageSize=30&equipmentName={}&startDate={start}&endDate={end}",
+        percent_encode("移动电话机")
+    );
+    let mut text = String::new();
+    let mut ok = false;
+    for attempt in 0..3 {
+        match client
+            .get(&url)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.text())
+        {
+            Ok(t) => {
+                text = t;
+                ok = true;
+                break;
+            }
+            Err(e) => {
+                eprintln!("  window {start}~{end} attempt {}/3 error: {e}", attempt + 1);
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            }
+        }
+    }
+    if !ok {
+        return Ok(()); // give up this window, keep the rest
+    }
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if v["code"].as_i64().unwrap_or(0) != 200 || v["data"].is_null() {
+        // "无该条纪录" = empty window
+        if delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+        return Ok(());
+    }
+    let data = &v["data"];
+    let records = data["records"].as_array().cloned().unwrap_or_default();
+
+    // 服务端 total 同样被截断为 30；返回满 30 条即可能还有更多 → 按日期二分
+    if records.len() >= 30 && start < end {
+        let mid = mid_date(start, end);
+        let next = add_days(&mid, 1);
+        // 先处理较新的一半：服务端按注册序返回窗口内最早 30 条，
+        // 左半（较老）会重复返回同批旧记录，先右后左可确保每片窗口拿到自己的数据
+        tenaa_window(client, &next, end, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
+        tenaa_window(client, start, &mid, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
+        return Ok(());
+    }
+    // leaf: add all records (<= 30)
+    if devices.len() % 500 < 30 {
+        println!("  ... {} devices so far (window {start}~{end})", devices.len());
+    }
+    for r in &records {
+        let model = r["equipmentModel"].as_str().unwrap_or("").trim().to_string();
+        let cert_name = r["equipmentName"].as_str().unwrap_or("").trim().to_string();
+        let org = r["applyOrg"].as_str().unwrap_or("").trim().to_string();
+        if model.is_empty() || !seen.insert(model.clone()) {
+            continue;
+        }
+        let brand = normalize_cn_brand(&org);
+        let name = if cert_name.is_empty() { model.clone() } else { cert_name };
+        devices.push(json!({
+            "brand": brand,
+            "name": name,
+            "series": "进网许可",
+            "code": r["licenseNo"].as_str().unwrap_or(""),
+            "models": [{ "ids": [model], "market_name": name }],
+        }));
+        if max_devices.map(|m| devices.len() >= m).unwrap_or(false) {
+            break;
+        }
+    }
+    if delay_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
+    Ok(())
+}
+
+fn parse_date(s: &str) -> i64 {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() / 86400)
+        .unwrap_or(0)
+}
+
+fn format_date(days: i64) -> String {
+    chrono::DateTime::from_timestamp(days * 86400, 0)
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+fn mid_date(a: &str, b: &str) -> String {
+    format_date((parse_date(a) + parse_date(b)) / 2)
+}
+
+fn add_days(date: &str, n: i64) -> String {
+    format_date(parse_date(date) + n)
+}
+
+/// Minimal percent-encoding for query strings (UTF-8).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +813,14 @@ mod tests {
 <tr><td>Huawei Mate 60 Pro</td><td>ALN-AL10</td><td>2023</td></tr>
 </tbody></table>"#;
 
+
+    #[test]
+    fn date_math() {
+        assert_eq!(mid_date("2000-01-01", "2026-12-31"), "2013-07-01");
+        assert_eq!(add_days("2026-12-31", 1), "2027-01-01");
+        assert_eq!(mid_date("2026-01-01", "2026-12-31"), "2026-07-02");
+        assert_eq!(add_days("2000-01-01", -1), "1999-12-31");
+    }
 
     #[test]
     fn parse_huawei_fixture() {

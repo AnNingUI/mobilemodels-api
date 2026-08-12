@@ -84,7 +84,7 @@ mobilemodels-db build --data-dir data --source brands
 | **Apple（A 编号 ↔ 机型，2007 全系）** | Wikipedia: List of iPhone models | CC BY-SA，✅ 已实现（52 台，含 iPhone 17 系 + 硬件字符串代号，如 iPhone4→A1332） |
 | Apple（官方权威子集） | Apple 官方支持页 HT201296 | 官方事实，大陆直连，✅ 命令 `--source apple` |
 | **华为 / 鸿蒙（含型号）** | Wikipedia: List of Huawei products | CC BY-SA，✅ 已实现（158 台，Ascend/Y/Nova/Enjoy 系） |
-| 国行进网型号 ID | 工信部 TENAA / 3C 认证 | ⚠️ 当前不可达：TENAA 域名已停（NXDOMAIN）、cx.cnca.cn 源站 521；站点恢复或从可达网络运行即可接入 |
+| **国行全部手机进网型号** | 工信部进网许可新站 jwxk.miit.gov.cn | 官方备案记录，✅ 已实现（44k+ 条，2000 年至今全量；日期窗口递归绕过 30 条/查询上限） |
 | FCC 备案 | FCC 设备授权库 | ⚠️ 当前对大陆 IP 403；需 US 网络/CI 环境 |
 | 华为 Mate/P 旗舰系列 | — | ⚠️ 维基无设备表，暂无干净来源（可后续接华为官网/认证站） |
 

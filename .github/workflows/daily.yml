@@ -29,6 +29,9 @@ jobs:
       # Wikipedia（CC BY-SA）：CI US 运行器可访问
       - name: collect Huawei / HarmonyOS (Wikipedia)
         run: ./rust/target/release/mobilemodels-db collect --source wikipedia-huawei --out brands
+      # 工信部进网许可（国行手机权威数据；全量约 44k 条，需 1-3.5 小时（政府站响应慢+30 条/查询上限））
+      - name: collect TENAA 进网许可 (MIIT)
+        run: ./rust/target/release/mobilemodels-db collect --source tenaa --out brands
 
       - name: rebuild redb KV + HNSW index
         run: ./rust/target/release/mobilemodels-db build --data-dir data --source brands

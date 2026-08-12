@@ -15,12 +15,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ARG REPO
-# 首次部署时 build-release 工作流可能还没跑完，加重试
+# 下载预编译二进制；校验 ELF 魔数 + 可执行，失败立即报错（不能用 || true 掩盖）
 RUN curl --retry 8 --retry-all-errors --retry-delay 10 -sL \
       "https://github.com/${REPO}/releases/latest/download/mobilemodels-db" \
       -o /usr/local/bin/mobilemodels-db \
     && chmod +x /usr/local/bin/mobilemodels-db \
-    && /usr/local/bin/mobilemodels-db stats 2>&1 | head -1 || true
+    && if [ "$(head -c 4 /usr/local/bin/mobilemodels-db | od -An -tx1 | tr -d ' ')" != "7f454c46" ]; then \
+         echo "ERROR: downloaded file is not an ELF binary (repo 是否 Public？build-release 是否已生成 Release？)" >&2; \
+         exit 1; \
+       fi \
+    && /usr/local/bin/mobilemodels-db --help >/dev/null
 
 # 数据源：每日工作流提交的 brands/*.json（进网/安卓/苹果/华为）
 COPY brands/ brands/

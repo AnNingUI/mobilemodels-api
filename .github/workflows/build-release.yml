@@ -1,0 +1,39 @@
+# 预编译发布二进制：Render 免费 512MB 实例编译 Rust 会 OOM，
+# 所以改用 GitHub Actions（7GB 内存）编译，发布到 GitHub Release，
+# Dockerfile 直接下载二进制，无需在 Render 上编译。
+name: build-release
+
+on:
+  push:
+    branches: [main]
+    # 只有 Rust 代码变化才重新编译；每日数据提交（brands/*.json）不会触发
+    paths:
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: build release binary
+        run: cargo build --release --manifest-path rust/Cargo.toml
+
+      - name: strip binary
+        run: strip rust/target/release/mobilemodels-db || true
+
+      - name: publish binary to GitHub Release (tag: latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          files: rust/target/release/mobilemodels-db
+          body: "预编译二进制（Render 部署用）。Dockerfile 从 /releases/latest/download/mobilemodels-db 下载。"
+          fail_on_unmatched_files: false

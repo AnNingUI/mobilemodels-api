@@ -20,3 +20,4 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [profile.release]
 # NOTE: avoid linker-plugin-lto + codegen-units=1 — it triggers a rustc ICE
 # on the `windows` crate with this nightly toolchain.
+strip = true

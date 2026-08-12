@@ -1,25 +1,28 @@
 # syntax=docker/dockerfile:1
 
-# ---------- build stage: compile the Rust binary ----------
-FROM rust:1-slim AS builder
-WORKDIR /build
-COPY rust/Cargo.toml rust/Cargo.lock ./
-COPY rust/src ./src
-# Cache dependencies first (layer stays warm across rebuilds)
-RUN cargo build --release
+# Render 免费实例内存只有 512MB，编译 Rust（axum/tokio/reqwest 等）会 OOM。
+# 方案：GitHub Actions（build-release.yml）预编译二进制发布到 GitHub Release，
+# 这里直接从 /releases/latest/download/mobilemodels-db 下载，构建只需 ~1 分钟。
 
-# ---------- runtime stage: tiny debian image ----------
+# 仓库（用于下载二进制；Public 仓库无需认证）
+ARG REPO=AnNingUI/mobilemodels-api
+
 FROM debian:bookworm-slim
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/mobilemodels-db /usr/local/bin/mobilemodels-db
+ARG REPO
+# 首次部署时 build-release 工作流可能还没跑完，加重试
+RUN curl --retry 8 --retry-all-errors --retry-delay 10 -sL \
+      "https://github.com/${REPO}/releases/latest/download/mobilemodels-db" \
+      -o /usr/local/bin/mobilemodels-db \
+    && chmod +x /usr/local/bin/mobilemodels-db \
+    && /usr/local/bin/mobilemodels-db stats 2>&1 | head -1 || true
 
-# 数据源：部署时把你的 JSON 数据放进仓库根目录 brands/（或挂载卷到 /app/brands）
-# 数据格式见 README.md「数据格式」；examples/data.json 仅用于本地测试演示
+# 数据源：每日工作流提交的 brands/*.json（进网/安卓/苹果/华为）
 COPY brands/ brands/
 COPY examples/ examples/
 

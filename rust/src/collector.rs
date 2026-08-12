@@ -622,7 +622,19 @@ fn normalize_cn_brand(org: &str) -> String {
 /// **date-window recursion**: the API caps any single query at 30 records and
 /// pagination beyond that fails, so we bisect the date range until each window
 /// holds <= 30 records. ~44k records => ~1500 leaf queries.
-pub fn collect_tenaa(out_path: &Path, max_devices: Option<usize>, delay_ms: u64) -> Result<usize> {
+/// Collect Chinese phone network-access certificates (进网许可) by
+/// **date-window recursion** (API caps any single query at 30 records).
+///
+/// Incremental: if `out_path` already exists, its devices are loaded first and
+/// merged (dedupe by 进网型号); `since` limits the fetch window to new data,
+/// turning daily runs from ~3h into a few minutes. First run (no file / small
+/// file) does the full 2000→now crawl.
+pub fn collect_tenaa(
+    out_path: &Path,
+    max_devices: Option<usize>,
+    delay_ms: u64,
+    since: Option<&str>,
+) -> Result<usize> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
         .build()
@@ -630,12 +642,27 @@ pub fn collect_tenaa(out_path: &Path, max_devices: Option<usize>, delay_ms: u64)
     let mut devices: Vec<Value> = Vec::new();
     let mut seen = HashSet::new();
     let mut queries = 0usize;
-    let (start, end) = ("2000-01-01", "2026-12-31");
 
+    // 加载已有数据 → 增量合并
+    if let Ok(text) = std::fs::read_to_string(out_path) {
+        if let Ok(existing) = serde_json::from_str::<Vec<Value>>(&text) {
+            for d in existing {
+                if let Some(model) = d["models"][0]["ids"][0].as_str() {
+                    if seen.insert(model.to_string()) {
+                        devices.push(d);
+                    }
+                }
+            }
+            println!("  loaded {} existing devices for incremental merge", devices.len());
+        }
+    }
+
+    let start = since.unwrap_or("2000-01-01");
+    let end = "2026-12-31";
     tenaa_window(
         &client, start, end, &mut devices, &mut seen, delay_ms, max_devices, &mut queries, 0,
     )?;
-    println!("  total queries: {queries}");
+    println!("  total queries: {queries} (new devices: {})", devices.len());
     if let Some(dir) = out_path.parent() {
         std::fs::create_dir_all(dir)?;
     }

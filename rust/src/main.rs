@@ -149,7 +149,9 @@ fn cmd_build(args: &[String]) -> Result<()> {
 fn cmd_collect(args: &[String]) -> Result<()> {
     let (out, rest) = take_flag(args, "--out", "brands");
     let (limit_str, rest) = take_flag(&rest, "--limit", "");
-    let (source, _) = take_flag(&rest, "--source", "google-play");
+    let (source, rest) = take_flag(&rest, "--source", "google-play");
+    let (since, _) = take_flag(&rest, "--since", "");
+    let since = if since.is_empty() { None } else { Some(since) };
     let limit = if limit_str.is_empty() {
         None
     } else {
@@ -181,7 +183,7 @@ fn cmd_collect(args: &[String]) -> Result<()> {
         "tenaa" => {
             // 工信部进网许可（国行手机权威数据，大陆直连）
             let path = PathBuf::from(&out).join("tenaa.json");
-            let n = collector::collect_tenaa(&path, limit, 200)?;
+            let n = collector::collect_tenaa(&path, limit, 200, since.as_deref())?;
             println!("collected {n} devices -> {}", path.display());
         }
         other => anyhow::bail!(

@@ -1,0 +1,6 @@
+.git
+.gitignore
+Dockerfile
+render.yaml
+data/
+rust/target/

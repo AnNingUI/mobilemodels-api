@@ -1,0 +1,5 @@
+# generated databases
+data/
+
+# rust build output
+rust/target/

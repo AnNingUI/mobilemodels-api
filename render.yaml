@@ -1,0 +1,12 @@
+# Render.com blueprint — 免费 Web Service 一键部署
+# 用法：把仓库推到 GitHub → Render 新建 Blueprint 指向该仓库即可
+services:
+  - type: web
+    name: mobilemodels-db
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000

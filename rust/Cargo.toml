@@ -1,0 +1,20 @@
+[package]
+name = "mobilemodels-db"
+version = "0.1.0"
+edition = "2021"
+description = "Data-ify MobileModels: parse brand markdown -> redb KV store + usearch vector index"
+
+[dependencies]
+redb = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+anyhow = "1"
+hnsw_rs = "0.3"
+anndists = "0.1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+
+[profile.release]
+# NOTE: avoid linker-plugin-lto + codegen-units=1 — it triggers a rustc ICE
+# on the `windows` crate with this nightly toolchain.

@@ -81,12 +81,16 @@ mobilemodels-db build --data-dir data --source brands
 | 数据类别 | 来源 | 授权情况 |
 |---|---|---|
 | Android 机型 + codename（全品牌） | Google Play 官方设备兼容列表 | Google 公开发布的事实数据，✅ 已实现 |
+| **Apple（A 编号 ↔ 机型）** | Wikipedia: List of iPhone models | CC BY-SA（可商用，需署名+同协议），✅ 已实现 |
+| **华为 / 鸿蒙（含 codename/型号）** | Wikipedia: List of Huawei phones | CC BY-SA，✅ 已实现 |
+| 荣耀（鸿蒙系） | Wikipedia: List of Honor phones | CC BY-SA，✅ 已实现 |
 | 国行进网型号 ID | 工信部 TENAA / 3C 认证 | 官方备案记录（事实），🕐 计划中 |
-| Apple A 编号 ↔ 机型 | Apple 官网技术规格 / FCC 备案 | 官方事实，🕐 计划中 |
-| 各品牌机型 / 代号 | Wikipedia / Wikidata | CC BY-SA（可商用）/ CC0，🕐 计划中 |
 
 ⚠️ 原则：只用官方/CC0/CC-BY-SA 一手来源；**不要**抓取 GSMArena 等 ToS 禁止批量抓取的聚合站；
 不要复制第三方项目的文件编排（用自有 JSON 格式）。
+
+> 注：Wikipedia 在大陆网络不可达，维基源收集在每日 GitHub Actions（US 运行器）中自动执行，
+> 本地执行会报连接超时（属预期）。维基解析器有单测覆盖（`cargo test`）。
 
 ## HTTP API
 

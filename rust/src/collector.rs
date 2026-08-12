@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 const GOOGLE_PLAY_URL: &str = "https://storage.googleapis.com/play_public/supported_devices.html";
+const WIKI_API: &str = "https://en.wikipedia.org/w/api.php";
 
 fn unescape(s: &str) -> String {
     s.replace("&amp;", "&")
@@ -113,4 +114,289 @@ pub fn collect_google_play(out_path: &Path, limit: Option<usize>) -> Result<usiz
     let bytes = serde_json::to_vec(&devices)?;
     std::fs::write(out_path, bytes)?;
     Ok(devices.len())
+}
+
+// ---------------------------------------------------------------------------
+// Wikipedia（CC BY-SA，可商用）—— Apple / Huawei(HarmonyOS) / Honor
+// 页面: List_of_iPhone_models / List_of_Huawei_phones / List_of_Honor_phones
+// ---------------------------------------------------------------------------
+
+/// Decode HTML entities (named common ones + numeric).
+fn unescape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            if let Some(end) = s[i..].find(';') {
+                let ent = &s[i + 1..i + end];
+                let c = match ent {
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
+                    "quot" => Some('"'),
+                    "apos" => Some('\''),
+                    "nbsp" => Some(' '),
+                    "ndash" => Some('–'),
+                    "mdash" => Some('—'),
+                    "middot" => Some('·'),
+                    _ => {
+                        if let Some(hex) = ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X")) {
+                            u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+                        } else if let Some(dec) = ent.strip_prefix('#') {
+                            dec.parse::<u32>().ok().and_then(char::from_u32)
+                        } else {
+                            None
+                        }
+                    }
+                };
+                if let Some(c) = c {
+                    out.push(c);
+                    i += end + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Parse MediaWiki HTML into tables: Vec<rows> of Vec<(is_header_cell, text)>.
+pub fn parse_wiki_tables(html: &str) -> Vec<Vec<Vec<(bool, String)>>> {
+    let mut tables = Vec::new();
+    let mut rest = html;
+    while let Some(ts) = rest.find("<table") {
+        let te = match rest[ts..].find("</table>") {
+            Some(e) => ts + e,
+            None => break,
+        };
+        let table_html = &rest[ts..te];
+        rest = &rest[te + 8..];
+
+        // only wikitables (data tables)
+        if !table_html.contains("wikitable") {
+            continue;
+        }
+        let mut rows = Vec::new();
+        let mut row_start = table_html.find("<tr");
+        while let Some(rs) = row_start {
+            let re = match table_html[rs..].find("</tr>") {
+                Some(e) => rs + e,
+                None => break,
+            };
+            let row_html = &table_html[rs..re];
+            row_start = table_html[re + 5..].find("<tr").map(|p| re + 5 + p);
+
+            let mut cells = Vec::new();
+            let mut cell_start = 0;
+            while let Some(cs) = row_html[cell_start..]
+                .find("<td")
+                .or_else(|| row_html[cell_start..].find("<th"))
+            {
+                let cs = cell_start + cs;
+                let tag_end = row_html[cs..]
+                    .find('>')
+                    .map(|p| cs + p + 1)
+                    .unwrap_or(row_html.len());
+                let is_th = row_html[cs..tag_end].starts_with("<th");
+                let cell_end = match row_html[tag_end..]
+                    .find("</td>")
+                    .or_else(|| row_html[tag_end..].find("</th>"))
+                {
+                    Some(e) => tag_end + e,
+                    None => row_html.len(),
+                };
+                let raw = &row_html[tag_end..cell_end];
+                cells.push((is_th, unescape_html(&strip_tags(raw)).trim().to_string()));
+                cell_start = cell_end + 5;
+            }
+            if !cells.is_empty() {
+                rows.push(cells);
+            }
+        }
+        tables.push(rows);
+    }
+    tables
+}
+
+fn col_index(header: &[(bool, String)], keys: &[&str]) -> Option<usize> {
+    header.iter().position(|(_, h)| {
+        let h = h.to_lowercase();
+        keys.iter().any(|k| h.contains(k))
+    })
+}
+
+/// Extract devices from parsed tables.
+/// kind = "apple" (Model + Model number A-numbers)
+/// kind = "huawei" (Model + optional Codename/Model number; else name as model)
+pub fn extract_from_tables(
+    tables: &[Vec<Vec<(bool, String)>>],
+    brand: &str,
+    kind: &str,
+    limit: Option<usize>,
+) -> Vec<Value> {
+    let mut devices: Vec<Value> = Vec::new();
+    let mut seen = HashSet::new();
+    for table in tables {
+        let Some(header_row) = table.first() else { continue };
+        let name_col = col_index(header_row, &["model"]);
+        let modelnum_col = col_index(header_row, &["model number", "model no"]);
+        let codename_col = col_index(header_row, &["codename", "code name"]);
+        if name_col.is_none() && modelnum_col.is_none() {
+            continue;
+        }
+        for row in table.iter().skip(1) {
+            // skip section-header rows (single th cell spanning the table)
+            if row.len() == 1 && row[0].0 {
+                continue;
+            }
+            let cell = |i: Option<usize>| -> Option<&String> {
+                i.and_then(|ix| row.get(ix))
+                    .map(|c| &c.1)
+                    .filter(|s| !s.is_empty())
+            };
+            let name = cell(name_col).or_else(|| cell(modelnum_col)).cloned();
+            let Some(name) = name else { continue };
+
+            let (ids, market): (Vec<String>, String) = match kind {
+                "apple" => {
+                    let raw = cell(modelnum_col).cloned().unwrap_or_else(|| name.clone());
+                    // Apple model numbers look like A1332 / A2849
+                    let mut ids: Vec<String> = raw
+                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                        .filter(|t| {
+                            let t = t.trim();
+                            t.len() >= 4
+                                && t.starts_with('A')
+                                && t[1..].chars().all(|c| c.is_ascii_digit())
+                        })
+                        .map(|t| t.to_string())
+                        .collect();
+                    ids.sort();
+                    ids.dedup();
+                    (ids, name.clone())
+                }
+                _ => {
+                    let ids: Vec<String> = cell(modelnum_col)
+                        .map(|raw| {
+                            raw.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                                .filter(|t| t.len() >= 3)
+                                .map(|t| t.to_string())
+                                .collect()
+                        })
+                        // Huawei 的 Codename 列即型号（如 VOG-L29 / ALN-AL10）
+                        .or_else(|| cell(codename_col).map(|c| vec![c.clone()]))
+                        .unwrap_or_default();
+                    (ids, name.clone())
+                }
+            };
+
+            let key = (brand.to_string(), name.clone(), ids.join("|"));
+            if !seen.insert(key) {
+                continue;
+            }
+            let models = if ids.is_empty() {
+                vec![json!({ "ids": [name], "market_name": name })]
+            } else {
+                vec![json!({ "ids": ids, "market_name": market })]
+            };
+            let codename = cell(codename_col).cloned().unwrap_or_default();
+            devices.push(json!({
+                "brand": brand,
+                "name": name,
+                "codename": codename,
+                "models": models,
+            }));
+            if let Some(l) = limit {
+                if devices.len() >= l {
+                    return devices;
+                }
+            }
+        }
+    }
+    devices
+}
+
+/// Fetch a Wikipedia page (MediaWiki API, HTML) and extract devices.
+/// Note: Wikipedia is unreachable from mainland CN networks — run via GitHub
+/// Actions (US runners) or a proxy. Falls back gracefully on failure.
+pub fn collect_wikipedia(
+    page: &str,
+    brand: &str,
+    kind: &str,
+    out_path: &Path,
+    limit: Option<usize>,
+) -> Result<usize> {
+    let url = format!("{WIKI_API}?action=parse&page={page}&prop=text&format=json&formatversion=2");
+    println!("fetching {page} (Wikipedia) ...");
+    let resp = reqwest::blocking::get(&url)
+        .with_context(|| format!("GET wikipedia page {page}"))?
+        .error_for_status()?;
+    let text = resp.text()?;
+    let v: Value = serde_json::from_str(&text).context("wikipedia api json")?;
+    let html = v["parse"]["text"]
+        .as_str()
+        .context("wikipedia api: no parse.text (page may not exist)")?;
+    let tables = parse_wiki_tables(html);
+    println!("  parsed {} wikitables", tables.len());
+    let devices = extract_from_tables(&tables, brand, kind, limit);
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
+    Ok(devices.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const APPLE_FIXTURE: &str = r#"<table class="wikitable"><tbody>
+<tr><th>Model</th><th>Release date</th><th>Model number</th><th>SoC</th></tr>
+<tr><td>iPhone 3G</td><td>July 11, 2008</td><td>A1324</td><td>Samsung S5L8920</td></tr>
+<tr><td>iPhone 4</td><td>June 24, 2010</td><td>A1332 (GSM), A1349 (CDMA)</td><td>Apple A4</td></tr>
+<tr><th colspan="4">2011: iPhone 4S</th></tr>
+<tr><td>iPhone 4S</td><td>October 14, 2011</td><td>A1431 (GSM), A1387 (CDMA)</td><td>Apple A5</td></tr>
+</tbody></table>"#;
+
+    #[test]
+    fn parse_apple_fixture() {
+        let tables = parse_wiki_tables(APPLE_FIXTURE);
+        assert_eq!(tables.len(), 1);
+        let devices = extract_from_tables(&tables, "Apple", "apple", None);
+        assert_eq!(devices.len(), 3, "section header row must be skipped");
+        let d0 = &devices[0];
+        assert_eq!(d0["name"], "iPhone 3G");
+        assert_eq!(d0["models"][0]["ids"][0], "A1324");
+        let d1 = &devices[1];
+        let ids: Vec<&str> = d1["models"][0]["ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["A1332", "A1349"], "split multiple A-numbers");
+        let d3 = &devices[2];
+        assert_eq!(d3["name"], "iPhone 4S");
+    }
+
+    const HUAWEI_FIXTURE: &str = r#"<table class="wikitable"><tbody>
+<tr><th>Model</th><th>Codename</th><th>Released</th></tr>
+<tr><td>Huawei P30 Pro</td><td>VOG-L29</td><td>2019</td></tr>
+<tr><td>Huawei Mate 60 Pro</td><td>ALN-AL10</td><td>2023</td></tr>
+</tbody></table>"#;
+
+
+    #[test]
+    fn parse_huawei_fixture() {
+        let tables = parse_wiki_tables(HUAWEI_FIXTURE);
+        let devices = extract_from_tables(&tables, "Huawei", "huawei", None);
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0]["name"], "Huawei P30 Pro");
+        assert_eq!(devices[0]["codename"], "VOG-L29");
+        assert_eq!(devices[0]["models"][0]["ids"][0], "VOG-L29");
+        assert_eq!(devices[1]["name"], "Huawei Mate 60 Pro");
+    }
 }

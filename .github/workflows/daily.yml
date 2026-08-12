@@ -23,9 +23,9 @@ jobs:
       - name: collect from Google Play (official device list)
         run: ./rust/target/release/mobilemodels-db collect --source google-play --out brands
 
-      # Apple 官方支持页（大陆可直连）
-      - name: collect Apple (official support page)
-        run: ./rust/target/release/mobilemodels-db collect --source apple --out brands
+      # Apple 全系（Wikipedia List of iPhone models：A 编号 + 硬件代号）
+      - name: collect Apple (complete, Wikipedia)
+        run: ./rust/target/release/mobilemodels-db collect --source apple-all --out brands
       # Wikipedia（CC BY-SA）：CI US 运行器可访问
       - name: collect Huawei / HarmonyOS (Wikipedia)
         run: ./rust/target/release/mobilemodels-db collect --source wikipedia-huawei --out brands

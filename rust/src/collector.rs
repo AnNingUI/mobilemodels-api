@@ -207,22 +207,26 @@ pub fn parse_wiki_tables(html: &str) -> Vec<Vec<Vec<(bool, String)>>> {
 
             let mut cells = Vec::new();
             let mut cell_start = 0;
-            while let Some(cs) = row_html[cell_start..]
-                .find("<td")
-                .or_else(|| row_html[cell_start..].find("<th"))
-            {
-                let cs = cell_start + cs;
+            loop {
+                // 取 <td / <th 中最早出现的位置（不能用 or_else——会跳过先出现的 <th）
+                let td = row_html[cell_start..].find("<td");
+                let th = row_html[cell_start..].find("<th");
+                let cs = match (td, th) {
+                    (Some(a), Some(b)) => Some(a.min(b) + cell_start),
+                    (a, b) => a.or(b).map(|p| p + cell_start),
+                };
+                let Some(cs) = cs else { break };
                 let tag_end = row_html[cs..]
                     .find('>')
                     .map(|p| cs + p + 1)
                     .unwrap_or(row_html.len());
                 let is_th = row_html[cs..tag_end].starts_with("<th");
-                let cell_end = match row_html[tag_end..]
-                    .find("</td>")
-                    .or_else(|| row_html[tag_end..].find("</th>"))
-                {
-                    Some(e) => tag_end + e,
-                    None => row_html.len(),
+                // 结束标签同样取最早出现：th 单元格后面紧跟的 </td> 不应被误用
+                let ce_td = row_html[tag_end..].find("</td>");
+                let ce_th = row_html[tag_end..].find("</th>");
+                let cell_end = match (ce_td, ce_th) {
+                    (Some(a), Some(b)) => tag_end + a.min(b),
+                    (a, b) => a.or(b).map(|p| tag_end + p).unwrap_or(row_html.len()),
                 };
                 let raw = &row_html[tag_end..cell_end];
                 cells.push((is_th, unescape_html(&strip_tags(raw)).trim().to_string()));
@@ -368,7 +372,16 @@ pub fn collect_wikipedia(
         .context("wikipedia api: no parse.text (page may not exist)")?;
     let tables = parse_wiki_tables(html);
     println!("  parsed {} wikitables", tables.len());
-    let devices = extract_from_tables(&tables, brand, kind, limit);
+    let devices = match kind {
+        "apple-columns" => {
+            let mut d = extract_apple_columns(&tables);
+            if let Some(l) = limit {
+                d.truncate(l);
+            }
+            d
+        }
+        _ => extract_from_tables(&tables, brand, kind, limit),
+    };
     if let Some(dir) = out_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -477,6 +490,90 @@ pub fn collect_apple_support(out_path: &Path, limit: Option<usize>) -> Result<us
     Ok(devices.len())
 }
 
+/// Extract the COMPLETE Apple iPhone list from the "List of iPhone models"
+/// page — 4 transposed tables where devices are COLUMNS:
+///   row0: Model | iPhone 17e | iPhone 17 Pro Max | ...
+///   row2: Basic Info | Hardware Strings | iPhone18,5 | ...   (codename)
+///   row3: Model number | A3575A3634A3635 | A3257... | ...    (A-numbers, 5-char chunks)
+pub fn extract_apple_columns(tables: &[Vec<Vec<(bool, String)>>]) -> Vec<Value> {
+    let mut devices = Vec::new();
+    let mut seen = HashSet::new();
+    for table in tables {
+        let Some(row0) = table.first() else { continue };
+        if row0.len() < 3 || row0[0].1.trim() != "Model" {
+            continue;
+        }
+        let names: Vec<String> = row0[1..]
+            .iter()
+            .map(|c| c.1.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let mut a_rows: Vec<Vec<String>> = Vec::new();
+        let mut hw_row: Vec<String> = Vec::new();
+        for row in table.iter().skip(1) {
+            // 标签单元格可能在 col0（Model number）或 col1（rowgroup: Basic Info + Hardware Strings），
+            // 取标签之后的所有单元格作为该行值
+            let label_pos = row.iter().position(|c| {
+                let t = c.1.to_lowercase();
+                t.contains("model number") || t.contains("hardware strings") || t == "hardware"
+            });
+            if let Some(lp) = label_pos {
+                let values: Vec<String> = row[lp + 1..]
+                    .iter()
+                    .map(|c| c.1.trim().to_string())
+                    .collect();
+                if row[lp].1.to_lowercase().contains("model number") {
+                    a_rows.push(values);
+                } else {
+                    hw_row = values;
+                }
+            }
+        }
+        for (i, name) in names.into_iter().enumerate() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let mut ids: Vec<String> = a_rows
+                .iter()
+                .flat_map(|row| row.get(i).cloned().into_iter())
+                .flat_map(|raw| {
+                    // Apple A-numbers are exactly 5 chars (A + 4 digits),
+                    // often concatenated: "A3575A3634A3635"
+                    let compact: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                    let b = compact.as_bytes();
+                    let mut out = Vec::new();
+                    let mut j = 0;
+                    while j + 5 <= b.len() {
+                        let chunk = &compact[j..j + 5];
+                        if chunk.starts_with('A') && chunk[1..].chars().all(|c| c.is_ascii_digit()) {
+                            out.push(chunk.to_string());
+                        }
+                        j += 5;
+                    }
+                    out
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            ids.sort();
+            if ids.is_empty() {
+                continue;
+            }
+            let codename = hw_row.get(i).cloned().unwrap_or_default();
+            devices.push(json!({
+                "brand": "Apple",
+                "name": name,
+                "codename": codename,
+                "models": [{ "ids": ids, "market_name": name }],
+            }));
+        }
+    }
+    devices
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,5 +642,25 @@ mod tests {
         assert_eq!(ids, &vec!["A2849".to_string(), "A3105".to_string(), "A3108".to_string()]);
         assert_eq!(pairs[1].0, "iPhone 15");
         assert_eq!(pairs[2].0, "iPhone SE (2nd generation)");
+    }
+
+    const APPLE_COLUMNS_FIXTURE: &str = r#"<table class="wikitable"><tbody>
+<tr><th>Model</th><th>iPhone 5c</th><th>iPhone 5</th><th>iPhone 4s</th><th>iPhone 4</th></tr>
+<tr><td>Picture</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Basic Info</td><td>Hardware Strings</td><td>iPhone5,3iPhone5,4</td><td>iPhone5,1iPhone5,2</td><td>iPhone4,1</td><td>iPhone3,1</td></tr>
+<tr><td>Model number</td><td>A1456A1507A1529</td><td>A1428A1429A1442</td><td>A1431A1387</td><td>A1349A1332</td></tr>
+</tbody></table>"#;
+
+    #[test]
+    fn parse_apple_columns_fixture() {
+        let tables = parse_wiki_tables(APPLE_COLUMNS_FIXTURE);
+        assert_eq!(tables.len(), 1);
+        let devices = extract_apple_columns(&tables);
+        assert_eq!(devices.len(), 4);
+        assert_eq!(devices[0]["name"], "iPhone 5c");
+        assert_eq!(devices[0]["models"][0]["ids"], json!(["A1456", "A1507", "A1529"]));
+        assert_eq!(devices[3]["name"], "iPhone 4");
+        assert_eq!(devices[3]["models"][0]["ids"], json!(["A1332", "A1349"]), "A1332 老机型回归");
+        assert_eq!(devices[3]["codename"], "iPhone3,1");
     }
 }

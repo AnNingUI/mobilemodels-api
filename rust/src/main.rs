@@ -167,13 +167,19 @@ fn cmd_collect(args: &[String]) -> Result<()> {
             let n = collector::collect_apple_support(&path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
+        "apple-all" => {
+            // Wikipedia List of iPhone models：全系 A 编号 + 硬件字符串代号（CC BY-SA）
+            let path = PathBuf::from(&out).join("apple-all.json");
+            let n = collector::collect_wikipedia("List_of_iPhone_models", "Apple", "apple-columns", &path, limit)?;
+            println!("collected {n} devices -> {}", path.display());
+        }
         "wikipedia-huawei" => {
             let path = PathBuf::from(&out).join("wikipedia-huawei.json");
             let n = collector::collect_wikipedia("List_of_Huawei_products", "Huawei", "huawei", &path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
         other => anyhow::bail!(
-            "unknown source `{other}` (available: google-play, apple, wikipedia-huawei)"
+            "unknown source `{other}` (available: google-play, apple, apple-all, wikipedia-huawei)"
         ),
     }
     Ok(())

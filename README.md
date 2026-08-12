@@ -128,6 +128,11 @@ mobilemodels-db stats
 
 见 [rust/README.md](rust/README.md)「部署」章节：Render / Koyeb / Oracle Cloud Always Free / Google Cloud Run，均支持 Dockerfile 直接部署。
 
+> **构建策略（重要）**：Render 免费实例内存 512MB，直接编译 Rust 会 OOM。
+> 因此二进制由 `build-release.yml`（GitHub Actions）预编译并发布到 GitHub Release，
+> Dockerfile 直接下载（~6MB），构建只需 ~1 分钟。仓库建议设 **Public**（Actions 分钟无限、
+> Release 无需认证可下载）。
+
 ## 许可
 
 MIT License —— 代码完全独立，可商用；你提供的数据由你自行负责授权。

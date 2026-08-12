@@ -18,11 +18,10 @@ RUN apt-get update \
 
 COPY --from=builder /build/target/release/mobilemodels-db /usr/local/bin/mobilemodels-db
 
-# 数据源：部署时把你的数据放进仓库根目录 brands/（或挂载卷到 /app/brands）
-# 数据格式见 README.md「数据格式」；examples/ 仅用于本地测试演示，不会被解析
+# 数据源：部署时把你的 JSON 数据放进仓库根目录 brands/（或挂载卷到 /app/brands）
+# 数据格式见 README.md「数据格式」；examples/data.json 仅用于本地测试演示
 COPY brands/ brands/
-COPY misc/ misc/
 COPY examples/ examples/
 
 # 启动时重建 redb + 向量索引（~2s），随后提供 API
-CMD ["sh", "-c", "mobilemodels-db build --data-dir /data --source /app && exec mobilemodels-db serve --data-dir /data"]
+CMD ["sh", "-c", "mobilemodels-db build --data-dir /data --source /app/brands && exec mobilemodels-db serve --data-dir /data"]

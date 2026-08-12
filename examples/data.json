@@ -1,0 +1,46 @@
+[
+  {
+    "brand": "示例品牌 (Example)",
+    "series": "我的系列",
+    "code": "MB1",
+    "name": "MyPhone One",
+    "codename": "my_phone_1",
+    "models": [
+      { "ids": ["MP-1000"], "market_name": "MyPhone One 标准版" },
+      { "ids": ["MP-1001"], "market_name": "MyPhone One Pro" }
+    ]
+  },
+  {
+    "brand": "示例品牌 (Example)",
+    "series": "我的系列",
+    "code": "MB2",
+    "name": "MyPhone Two",
+    "codename": "my_phone_2",
+    "models": [
+      { "ids": ["MP-2000", "MP-2001"], "market_name": "MyPhone Two 双型号" }
+    ]
+  },
+  {
+    "brand": "示例品牌 (Example)",
+    "series": "我的系列",
+    "name": "MyPhone Three",
+    "models": ["MP-3000"]
+  },
+  {
+    "brand": "示例品牌 (Example)",
+    "series": "折叠系列",
+    "name": "MyFold",
+    "codename": "my_fold",
+    "models": [
+      { "ids": ["MF-100"], "market_name": "MyFold 折叠屏" }
+    ]
+  },
+  {
+    "brand": "示例品牌 (Example)",
+    "series": "折叠系列",
+    "name": "MyFold Mini",
+    "models": [
+      { "ids": ["MF-200"], "market_name": "MyFold Mini" }
+    ]
+  }
+]

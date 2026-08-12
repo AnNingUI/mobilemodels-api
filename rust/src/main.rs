@@ -7,7 +7,6 @@ mod vector;
 
 use anyhow::Result;
 use model::Device;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -18,8 +17,8 @@ fn usage() -> ! {
         r#"mobilemodels-db — MobileModels → redb KV + usearch vector DBs
 
 USAGE:
-  mobilemodels-db build [--data-dir DIR] [--source DIR]       # parse *.md -> KV + vector index
-                                                               # --source: 数据源目录（默认当前目录，含 brands/ misc/ README.md）
+  mobilemodels-db build [--data-dir DIR] [--source PATH]      # parse JSON -> KV + vector index
+                                                               # --source: JSON 文件或含 *.json 的目录（默认当前目录）
   mobilemodels-db query <model|code|codename|name|brand|series> <KEY> [SERIES] [--data-dir DIR]
   mobilemodels-db search <TEXT> [-k N] [--brand NAME] [--data-dir DIR]
   mobilemodels-db export <file.json> [--data-dir DIR]
@@ -143,87 +142,9 @@ fn cmd_build(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn collect_devices(repo: &Path) -> Result<Vec<Device>> {
-    let mut devices = Vec::new();
-    // README.md is optional: without it, brand names fall back to file names.
-    let brand_map = match parse_readme_brands(&repo.join("README.md")) {
-        Ok(m) => m,
-        Err(_) => std::collections::HashMap::new(),
-    };
-
-    // brands/*.md — the main corpus (missing dir is OK: data-agnostic mode)
-    let mut entries: Vec<_> = match std::fs::read_dir(repo.join("brands")) {
-        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
-        Err(_) => {
-            eprintln!("  (no brands/ dir under {} — skipping)", repo.display());
-            Vec::new()
-        }
-    };
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let path = e.path();
-        if path.extension().and_then(|x| x.to_str()) != Some("md") {
-            continue;
-        }
-        let fname = path.file_name().unwrap().to_string_lossy().to_string();
-        let brand = brand_map
-            .get(&fname)
-            .cloned()
-            .unwrap_or_else(|| fname.trim_end_matches(".md").to_string());
-        let ds = parser::parse_brand_file(&path, &brand, &fname)?;
-        println!("  {:45} {:5} devices", fname, ds.len());
-        devices.extend(ds);
-    }
-
-    // misc/ — early-model lists, unreleased codenames, laptop internal names
-    // (all optional; skipped when absent)
-    let misc = repo.join("misc");
-    let mut add_misc = |file: &str, brand: &str, series: &str, mode: &str| -> Result<()> {
-        let path = misc.join(file);
-        if !path.exists() {
-            return Ok(());
-        }
-        let ds = match mode {
-            "list" => parser::parse_list_file(&path, brand, &format!("misc/{file}"), series)?,
-            "table" => parser::parse_table_file(&path, brand, &format!("misc/{file}"), series)?,
-            _ => parser::parse_brand_file(&path, brand, &format!("misc/{file}"))?,
-        };
-        println!("  {:45} {:5} devices", format!("misc/{file}"), ds.len());
-        devices.extend(ds);
-        Ok(())
-    };
-    add_misc("early-huawei-models.md", "华为", "早期型号", "list")?;
-    add_misc("early-samsung-models.md", "三星", "早期型号", "list")?;
-    add_misc("several-xiaomi-codenames-unreleased-devices.md", "小米", "", "brand")?;
-    add_misc("xiaomi-book-internal-names.md", "小米", "笔记本内部编号", "table")?;
-
-    Ok(devices)
-}
-
-/// Parse the `| [file](brands/file.md) | brand |` table in README.md.
-fn parse_readme_brands(path: &Path) -> Result<HashMap<String, String>> {
-    let content = std::fs::read_to_string(path)?;
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if !line.starts_with('|') {
-            continue;
-        }
-        let cols: Vec<&str> = line.trim_matches('|').split('|').map(|c| c.trim()).collect();
-        if cols.len() < 2 {
-            continue;
-        }
-        if let Some(rest) = cols[0].strip_prefix('[') {
-            let marker = "](brands/";
-            if let Some(pos) = rest.find(marker) {
-                let fname = &rest[pos + marker.len()..];
-                if let Some(end) = fname.find(')') {
-                    map.insert(fname[..end].to_string(), cols[1].to_string());
-                }
-            }
-        }
-    }
-    Ok(map)
+/// Load devices from a JSON file or a directory of `*.json` files.
+fn collect_devices(source: &Path) -> Result<Vec<Device>> {
+    parser::load_devices(source)
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ pub struct Device {
     /// Sequential id, also used as the usearch vector label.
     pub id: u32,
     pub brand: String,
-    /// Source file name, e.g. "xiaomi_cn.md" / "misc/early-huawei-models.md"
+    /// Source file name, e.g. "apple_all.json" / "brands/example.json"
     pub file: String,
     /// `##` section heading, empty when the file has no sections.
     pub series: String,

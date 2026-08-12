@@ -1,13 +1,13 @@
 # mobilemodels-db（Rust 核心）
 
-手机型号数据管道 + API 服务内核：解析 markdown 数据 → **redb**（纯 Rust 最快 ACID KV）+
+手机型号数据管道 + API 服务内核：解析 JSON 数据 → **redb**（纯 Rust 最快 ACID KV）+
 **HNSW 向量索引**（hnsw_rs，纯 Rust），HTTP 层用 **axum + tokio**。
 
 ## 架构
 
 ```
-brands/*.md（你的数据）
-   │  parser（零依赖）
+你的数据（JSON 文件/目录）
+   │  parser（serde_json）
    ▼
 Device 记录
    ├─► redb KV（data/mobilemodels.redb）
@@ -31,7 +31,7 @@ cargo +stable build --release   # 需要 stable（nightly 在部分 crate 上有
 ```bash
 B=./target/release/mobilemodels-db
 
-$B build --data-dir ../data --source ../examples   # 示例数据建库（<1s）
+$B build --data-dir ../data --source ../examples   # 示例 JSON 数据建库（<1s）
 $B query model MP-1000 --data-dir ../data          # 型号精确查询
 $B query codename my_phone_1 --data-dir ../data
 $B query brand 示例 --data-dir ../data             # 品牌（模糊）

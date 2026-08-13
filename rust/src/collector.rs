@@ -654,7 +654,10 @@ pub fn collect_tenaa(
         if let Ok(existing) = serde_json::from_str::<Vec<Value>>(&text) {
             let mut kept = 0usize;
             for d in existing {
-                let modern = d["name"].as_str().map(|n| n.contains("5G") || n.contains("LTE")).unwrap_or(false);
+                // 只保留手机：类别名须含"数字移动电话机"（排除 5G 基站/直放站等），且为 4G/5G
+                let modern = d["name"].as_str()
+                    .map(|n| n.contains("数字移动电话机") && (n.contains("5G") || n.contains("LTE")))
+                    .unwrap_or(false);
                 if !modern {
                     continue;
                 }
@@ -779,8 +782,12 @@ fn tenaa_window(
         println!("  ... {} devices so far (window {start}~{end})", devices.len());
     }
     for r in &records {
-        let model = r["equipmentModel"].as_str().unwrap_or("").trim().to_string();
         let cert_name = r["equipmentName"].as_str().unwrap_or("").trim().to_string();
+        // 只收录手机（类别名含"数字移动电话机"），排除 5G 基站等通信设备
+        if !cert_name.contains("数字移动电话机") {
+            continue;
+        }
+        let model = r["equipmentModel"].as_str().unwrap_or("").trim().to_string();
         let org = r["applyOrg"].as_str().unwrap_or("").trim().to_string();
         if model.is_empty() || !seen.insert(model.clone()) {
             continue;

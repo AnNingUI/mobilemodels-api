@@ -13,7 +13,7 @@ use std::process::exit;
 
 const DEFAULT_DATA_DIR: &str = "data";
 
-fn usage() -> ! {
+fn print_usage() {
     eprintln!(
         r#"mobilemodels-db — MobileModels → redb KV + usearch vector DBs
 
@@ -30,6 +30,10 @@ USAGE:
 Run from the repository root (or pass --data-dir). Default DIR = data/
 "#
     );
+}
+
+fn usage() -> ! {
+    print_usage();
     exit(1);
 }
 
@@ -45,7 +49,8 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        usage();
+        print_usage();
+        return;
     }
 
     // Piping into `head`/`cut` closes stdout early — that's a normal CLI

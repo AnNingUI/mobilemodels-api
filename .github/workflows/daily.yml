@@ -51,12 +51,6 @@ jobs:
       - name: export structured json
         run: ./mobilemodels-db export data/devices.json --data-dir data
 
-      - name: sync with remote main (robust to force-push divergence)
-        run: |
-          git fetch origin main
-          git reset --soft origin/main
-          git status --short | head -5
-
       - name: commit data refresh
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

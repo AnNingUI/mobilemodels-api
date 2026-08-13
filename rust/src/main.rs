@@ -201,8 +201,14 @@ fn cmd_collect(args: &[String]) -> Result<()> {
             let n = collector::collect_wikipedia_huawei_models(&path, limit)?;
             println!("collected {n} devices -> {}", path.display());
         }
+        "wikipedia-huawei-list" => {
+            // 中文维基《华为智能手机型号列表》：全机型含鸿蒙时代（需代理）
+            let path = PathBuf::from(&out).join("wikipedia-huawei-list.json");
+            let n = collector::collect_wikipedia_huawei_list(&path, limit)?;
+            println!("collected {n} devices -> {}", path.display());
+        }
         other => anyhow::bail!(
-            "unknown source `{other}` (available: google-play, apple, apple-all, wikipedia-huawei, wikipedia-huawei-models, tenaa)"
+            "unknown source `{other}` (available: google-play, apple, apple-all, wikipedia-huawei, wikipedia-huawei-models, wikipedia-huawei-list, tenaa)"
         ),
     }
     Ok(())

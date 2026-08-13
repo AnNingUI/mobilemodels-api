@@ -1066,3 +1066,84 @@ pub fn collect_wikipedia_huawei_models(out_path: &Path, limit: Option<usize>) ->
     std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
     Ok(devices.len())
 }
+/// 华为全机型权威列表（中文维基《华为智能手机型号列表》）
+/// 列: 名称（传播名）| 内部代号 | 型号 | 发布日期
+/// 含鸿蒙时代全部机型（Mate 60/70、Mate X3/X5/X6/XT、Pura、Nova...）
+pub fn collect_wikipedia_huawei_list(out_path: &Path, limit: Option<usize>) -> Result<usize> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
+        .build()
+        .context("build http client")?;
+    let url = format!(
+        "https://zh.wikipedia.org/w/api.php?action=parse&page={}&prop=text&format=json&formatversion=2",
+        percent_encode("华为智能手机型号列表")
+    );
+    let resp = client.get(&url).send().context("GET zh.wiki huawei list")?.error_for_status()?;
+    let text = resp.text()?;
+    let v: Value = serde_json::from_str(&text).context("zh wiki json")?;
+    let html = v["parse"]["text"].as_str().context("zh wiki parse.text")?;
+    let tables = parse_wiki_tables(html);
+    println!("  parsed {} wikitables", tables.len());
+
+    let re_code = regex::Regex::new(r#"\b[A-Z]{2,4}[0-9]?-[A-Z]{1,3}[0-9]{1,3}\b"#).unwrap();
+    let mut devices: Vec<Value> = Vec::new();
+    let mut seen = HashSet::new();
+    for table in &tables {
+        let Some(hdr) = table.first() else { continue };
+        let name_col = col_index(hdr, &["名称"]);
+        let codename_col = col_index(hdr, &["代号"]);
+        let model_col = col_index(hdr, &["型号"]);
+        if name_col.is_none() && model_col.is_none() {
+            continue;
+        }
+        for row in table.iter().skip(1) {
+            if row.len() == 1 && row[0].0 {
+                continue;
+            }
+            let cell = |i: Option<usize>| -> Option<String> {
+                i.and_then(|ix| row.get(ix))
+                    .map(|c| c.1.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+            let name = cell(name_col).or_else(|| cell(model_col)).unwrap_or_default();
+            let raw = cell(model_col).unwrap_or_default();
+            let mut codes: Vec<String> = re_code
+                .find_iter(&raw)
+                .map(|m| m.as_str().to_string())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            codes.sort();
+            if codes.is_empty() {
+                continue;
+            }
+            let key = codes.join("|");
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let codename = cell(codename_col).unwrap_or_default();
+            devices.push(json!({
+                "brand": "华为 (Huawei)",
+                "name": name,
+                "series": "华为智能手机型号列表",
+                "codename": codename,
+                "models": [{ "ids": codes, "market_name": name }],
+            }));
+            if let Some(l) = limit {
+                if devices.len() >= l {
+                    break;
+                }
+            }
+        }
+        if let Some(l) = limit {
+            if devices.len() >= l {
+                break;
+            }
+        }
+    }
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
+    Ok(devices.len())
+}

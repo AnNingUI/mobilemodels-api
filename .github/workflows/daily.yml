@@ -32,6 +32,9 @@ jobs:
       # Wikipedia（CC BY-SA）：CI US 运行器可访问
       - name: collect Huawei / HarmonyOS (Wikipedia)
         run: ./mobilemodels-db collect --source wikipedia-huawei --out brands
+      # 中文维基《华为智能手机型号列表》：鸿蒙时代全机型（Mate XT/60/70、X3-X6、Pura...）
+      - name: collect Huawei full model list (zh-Wikipedia)
+        run: ./mobilemodels-db collect --source wikipedia-huawei-list --out brands
       # 工信部进网许可（国行手机权威数据）
       # 首次全量约 44k 条需 1-3.5 小时；已有完整数据后只增量抓最近 180 天（几分钟）
       - name: collect TENAA 进网许可 (MIIT)

@@ -727,7 +727,19 @@ fn tenaa_window(
     let data = &v["data"];
     let records = data["records"].as_array().cloned().unwrap_or_default();
 
-    // 服务端 total 同样被截断为 30；返回满 30 条即可能还有更多 → 按日期二分
+    // 关键优化：如果返回满 30 条但全是已见过的重复（0 条新增），说明该范围的数据
+    // 已被覆盖（服务端日期过滤不严格，会返回 regDate ≤ endDate 的前 30 条），
+    // 不再拆分，直接跳过——避免在重复数据上无限递归。
+    let new_count = records.iter().filter(|r| {
+        r["equipmentModel"].as_str()
+            .map(|m| !seen.contains(m))
+            .unwrap_or(false)
+    }).count();
+    if records.len() >= 30 && new_count == 0 {
+        return Ok(());
+    }
+
+    // 返回满 30 条且有新数据 → 按日期二分
     if records.len() >= 30 && start < end {
         let mid = mid_date(start, end);
         let next = add_days(&mid, 1);

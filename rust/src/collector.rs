@@ -629,6 +629,12 @@ fn normalize_cn_brand(org: &str) -> String {
 /// merged (dedupe by 进网型号); `since` limits the fetch window to new data,
 /// turning daily runs from ~3h into a few minutes. First run (no file / small
 /// file) does the full 2000→now crawl.
+/// 现代机型类别（只采 4G/5G 智能机）：(类别子串, 该类别最早的起始年份)
+/// - "5G": 5G数字移动电话机（2019 年起）
+/// - "LTE": TD-LTE/FDD-LTE 4G 数字移动电话机（2013 年起）
+/// 跳过 2G/3G 功能机（GSM/WCDMA/CDMA/TD-SCDMA 等），采集更快、数据更聚焦。
+const TENAA_MODERN: &[(&str, &str)] = &[("5G", "2019-01-01"), ("LTE", "2013-01-01")];
+
 pub fn collect_tenaa(
     out_path: &Path,
     max_devices: Option<usize>,
@@ -643,26 +649,43 @@ pub fn collect_tenaa(
     let mut seen = HashSet::new();
     let mut queries = 0usize;
 
-    // 加载已有数据 → 增量合并
+    // 加载已有数据 → 增量合并；只保留现代机型（4G/5G），清除历史 2G/3G
     if let Ok(text) = std::fs::read_to_string(out_path) {
         if let Ok(existing) = serde_json::from_str::<Vec<Value>>(&text) {
+            let mut kept = 0usize;
             for d in existing {
+                let modern = d["name"].as_str().map(|n| n.contains("5G") || n.contains("LTE")).unwrap_or(false);
+                if !modern {
+                    continue;
+                }
                 if let Some(model) = d["models"][0]["ids"][0].as_str() {
                     if seen.insert(model.to_string()) {
                         devices.push(d);
+                        kept += 1;
                     }
                 }
             }
-            println!("  loaded {} existing devices for incremental merge", devices.len());
+            println!("  loaded {kept} existing modern devices (2G/3G purged)");
         }
     }
 
-    let start = since.unwrap_or("2000-01-01");
     let end = "2026-12-31";
-    tenaa_window(
-        &client, start, end, &mut devices, &mut seen, delay_ms, max_devices, &mut queries, 0,
-    )?;
-    println!("  total queries: {queries} (new devices: {})", devices.len());
+    for &(filter, min_start) in TENAA_MODERN {
+        if max_devices.map(|m| devices.len() >= m).unwrap_or(false) {
+            break;
+        }
+        // 起始日期 = max(用户 since, 类别最早年份) —— 各类别从各自时代开始，跳过老区
+        let start = match since {
+            Some(s) if s >= min_start => s.to_string(),
+            _ => min_start.to_string(),
+        };
+        println!("  pass: equipmentName={filter} (since {start})");
+        tenaa_window(
+            &client, filter, &start, end, &mut devices, &mut seen,
+            delay_ms, max_devices, &mut queries, 0,
+        )?;
+    }
+    println!("  total queries: {queries} (devices: {})", devices.len());
     if let Some(dir) = out_path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -672,6 +695,7 @@ pub fn collect_tenaa(
 
 fn tenaa_window(
     client: &reqwest::blocking::Client,
+    filter: &str,
     start: &str,
     end: &str,
     devices: &mut Vec<Value>,
@@ -691,7 +715,7 @@ fn tenaa_window(
     *queries += 1;
     let url = format!(
         "{TENAA_API}?isphoto=0&pageNo=1&pageSize=30&equipmentName={}&startDate={start}&endDate={end}",
-        percent_encode("移动电话机")
+        percent_encode(filter)
     );
     let mut text = String::new();
     let mut ok = false;
@@ -746,8 +770,8 @@ fn tenaa_window(
         let next = add_days(&mid, 1);
         // 先处理较新的一半：服务端按注册序返回窗口内最早 30 条，
         // 左半（较老）会重复返回同批旧记录，先右后左可确保每片窗口拿到自己的数据
-        tenaa_window(client, &next, end, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
-        tenaa_window(client, start, &mid, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
+        tenaa_window(client, filter, &next, end, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
+        tenaa_window(client, filter, start, &mid, devices, seen, delay_ms, max_devices, queries, depth + 1)?;
         return Ok(());
     }
     // leaf: add all records (<= 30)

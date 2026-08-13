@@ -35,7 +35,7 @@ $B collect --source google-play --out ../brands     # Google Play 官方列表�
 $B collect --source apple-all --out ../brands      # Apple 全系 A 编号+代号（Wikipedia，需代理）
 $B collect --source apple --out ../brands           # Apple 官方支持页权威子集（大陆直连）
 $B collect --source wikipedia-huawei --out ../brands # 华为/鸿蒙（Wikipedia，需外网/代理）
-$B collect --source tenaa --out ../brands            # 工信部进网许可全量（大陆直连，全量 1-3.5 小时；`--limit N` 可先取新数据）
+$B collect --source tenaa --out ../brands            # 工信部进网许可 4G/5G 机型（大陆直连；两轮：5G 2019起 + LTE 2013起，自动清除 2G/3G）
 $B build --data-dir ../data --source ../examples   # 示例 JSON 数据建库（<1s）
 $B query model MP-1000 --data-dir ../data          # 型号精确查询
 $B query codename my_phone_1 --data-dir ../data

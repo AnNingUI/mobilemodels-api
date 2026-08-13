@@ -135,7 +135,12 @@ fn cmd_build(args: &[String]) -> Result<()> {
     kv.build(&devices)?;
     println!("KV written  -> {}", kv_path.display());
 
-    // 向量为确定性函数，不落盘：启动时由设备文本现算（51k 条约 5 秒）
+    // 持久化向量：服务端启动免重算（弱 CPU 上也能秒级就绪）
+    let vectors: Vec<(u32, Vec<f32>)> = devices
+        .iter()
+        .map(|d| (d.id, embed::embed(&d.search_text())))
+        .collect();
+    kv.write_vectors(&vectors)?;
     let compacted = kv.compact()?;
     if compacted {
         println!("redb compacted (file shrunk)");
@@ -292,7 +297,6 @@ fn cmd_search(args: &[String]) -> Result<()> {
         .collect();
     let idx = vector::VectorIndex::build(&vectors)?;
 
-    let q = embed::embed(&text);
     // Resolve fuzzy brand filter (e.g. "小米" -> ["小米", "小米 (Xiaomi)"]).
     let brand_set: Vec<String> = if brand_filter.is_empty() {
         Vec::new()
@@ -303,22 +307,60 @@ fn cmd_search(args: &[String]) -> Result<()> {
         }
         set
     };
+
+    let q = embed::embed(&text);
+
+    // 精确提升：型号/代号/名称完全匹配置顶（避免哈希碰撞误排）
+    let mut results: Vec<(u32, f32, bool)> = Vec::new();
+    let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    if !text.trim().is_empty() {
+        for ids in [kv.by_model_id(&text), kv.by_codename(&text), kv.by_name(&text)] {
+            for id in ids.unwrap_or_default() {
+                if results.len() >= k {
+                    break;
+                }
+                if !seen.insert(id) {
+                    continue;
+                }
+                if let Ok(Some(d)) = kv.get_device(id as u32) {
+                    if brand_set.is_empty() || brand_set.iter().any(|b| *b == d.brand) {
+                        results.push((d.id, 1.0, true));
+                    }
+                }
+            }
+        }
+    }
+
     // Search extra candidates so filtering doesn't starve the result.
     let probe = k * 8;
     let hits = idx.search(&q, probe);
     println!("top {k} semantic matches for \"{text}\"{}",
         if brand_set.is_empty() { String::new() } else { format!(" (brand: {})", brand_set.join(", ")) });
+    let mut collected: Vec<(u32, f32, bool)> = results;
     let mut shown = 0;
     for (label, dist) in hits {
+        if collected.len() >= k {
+            break;
+        }
+        if !seen.insert(label as u64) {
+            continue;
+        }
         let Some(d) = kv.get_device(label)? else { continue };
         if !brand_set.is_empty() && !brand_set.iter().any(|b| *b == d.brand) {
             continue;
         }
-        let sim = 1.0 - dist;
-        println!("  [sim {:.4}] {}", sim, d.summary().replace('\n', "\n             "));
-        shown += 1;
+        collected.push((d.id, 1.0 - dist, false));
+    }
+    for (id, sim, exact) in collected {
         if shown >= k {
             break;
+        }
+        if let Some(d) = kv.get_device(id)? {
+            let tag = if exact { "exact" } else { "sim   " };
+            println!("  [{} {:.4}] {}", tag, sim, d.summary().replace("
+", "
+             "));
+            shown += 1;
         }
     }
     if shown == 0 {
@@ -367,16 +409,13 @@ fn cmd_serve(args: &[String]) -> Result<()> {
     let (kv_path, _) = data_paths(&data_dir);
     let kv = kv::KvStore::open(&kv_path)?;
     let started = std::time::Instant::now();
-    let devices = kv.all_devices()?;
-    let vectors: Vec<(u32, Vec<f32>)> = devices
-        .iter()
-        .map(|d| (d.id, embed::embed(&d.search_text())))
-        .collect();
+    let vectors = kv.read_vectors()?;
     if vectors.is_empty() {
         eprintln!("warning: empty dataset — search will return nothing");
     }
-    let index = vector::VectorIndex::build(&vectors)?;
-    println!("embeddings + HNSW index ready: {} nodes in {:?}", index.size(), started.elapsed());
+    // 服务端用精确线性扫描：无需构建 HNSW 图，弱 CPU 上秒级启动
+    let index = vector::ExactIndex::new(vectors);
+    println!("exact vector index ready: {} vectors in {:?}", index.size(), started.elapsed());
 
     let state = std::sync::Arc::new(server::AppState { kv, index });
     let rt = tokio::runtime::Builder::new_multi_thread()

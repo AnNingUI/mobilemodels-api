@@ -30,6 +30,7 @@ impl VectorIndex {
 
     /// k nearest neighbours, returned as (device_id, distance).
     /// Distance = 1 - cosine similarity for normalized vectors.
+
     pub fn search(&self, query: &[f32], k: usize) -> Vec<(u32, f32)> {
         let ef = (k * 4).max(32);
         self.index
@@ -41,5 +42,38 @@ impl VectorIndex {
 
     pub fn size(&self) -> usize {
         self.index.get_nb_point()
+    }
+}
+
+/// 精确线性扫描索引 —— 供服务端使用。
+/// 51k x 1024 维点积 ~几毫秒，**无需构建 HNSW 图**：启动即就绪、精确召回，
+/// 适合免费平台（0.1 CPU / 512MB）秒级冷启动。
+pub struct ExactIndex {
+    vectors: Vec<(u32, Vec<f32>)>,
+}
+
+impl ExactIndex {
+    pub fn new(vectors: Vec<(u32, Vec<f32>)>) -> Self {
+        Self { vectors }
+    }
+
+
+    pub fn search(&self, query: &[f32], k: usize) -> Vec<(u32, f32)> {
+        let mut scored: Vec<(u32, f32)> = self
+            .vectors
+            .iter()
+            .map(|(id, v)| {
+                let dot: f32 = v.iter().zip(query.iter()).map(|(a, b)| a * b).sum();
+                (*id, 1.0 - dot) // 距离 = 1 - cos
+            })
+            .collect();
+        // 完整排序（51k 条仅几毫秒）；select_nth 不保证顺序，服务端会取错
+        scored.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scored.truncate(k);
+        scored
+    }
+
+    pub fn size(&self) -> usize {
+        self.vectors.len()
     }
 }

@@ -10,6 +10,7 @@ const BY_CODE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_
 const BY_CODENAME: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_codename");
 const BY_BRAND: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_brand");
 const BY_SERIES: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("by_series");
+const VECTORS: TableDefinition<'static, u32, &[u8]> = TableDefinition::new("vectors");
 const META: TableDefinition<'static, &str, &str> = TableDefinition::new("meta");
 
 /// ASCII-lowercase key normalization (model ids / codenames / names are
@@ -94,6 +95,30 @@ impl KvStore {
     /// redb 是 COW 设计：写入会产生废弃页，文件膨胀；压缩回收。
     pub fn compact(&mut self) -> Result<bool> {
         Ok(self.db.compact()?)
+    }
+
+    /// 持久化嵌入向量（服务端启动免重算，弱 CPU 上秒级就绪）
+    pub fn write_vectors(&self, vectors: &[(u32, Vec<f32>)]) -> Result<()> {
+        let wtx = self.db.begin_write()?;
+        {
+            let mut t = wtx.open_table(VECTORS)?;
+            for (id, v) in vectors {
+                t.insert(*id, postcard::to_allocvec(v)?.as_slice())?;
+            }
+        }
+        wtx.commit()?;
+        Ok(())
+    }
+
+    pub fn read_vectors(&self) -> Result<Vec<(u32, Vec<f32>)>> {
+        let rtx = self.db.begin_read()?;
+        let t = rtx.open_table(VECTORS)?;
+        let mut out = Vec::with_capacity(t.len()? as usize);
+        for item in t.iter()? {
+            let (k, v) = item?;
+            out.push((k.value(), postcard::from_bytes(v.value())?));
+        }
+        Ok(out)
     }
 
     pub fn get_device(&self, id: u32) -> Result<Option<Device>> {

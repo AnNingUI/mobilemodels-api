@@ -7,7 +7,7 @@
 
 use crate::embed;
 use crate::kv::KvStore;
-use crate::vector::VectorIndex;
+use crate::vector::ExactIndex;
 use anyhow::Result;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -21,7 +21,7 @@ use std::time::Instant;
 
 pub struct AppState {
     pub kv: KvStore,
-    pub index: VectorIndex,
+    pub index: ExactIndex,
 }
 
 pub type Shared = Arc<AppState>;
@@ -189,16 +189,53 @@ async fn search(
     };
 
     let q = embed::embed(&p.q);
+
+    let mut results: Vec<Value> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let pass_brand = |d: &crate::model::Device| {
+        brand_set.is_empty() || brand_set.iter().any(|b| *b == d.brand)
+    };
+
+    // 1) 精确提升：查询文本完全匹配型号/代号/名称时置顶（避免哈希碰撞误排）
+    let q_trim = p.q.trim().to_string();
+    if !q_trim.is_empty() {
+        for ids in [
+            kv.by_model_id(&q_trim),
+            kv.by_codename(&q_trim),
+            kv.by_name(&q_trim),
+        ] {
+            for id in ids.unwrap_or_default() {
+                if results.len() >= k {
+                    break;
+                }
+                if !seen_ids.insert(id) {
+                    continue;
+                }
+                if let Ok(Some(d)) = kv.get_device(id as u32) {
+                    if pass_brand(&d) {
+                        results.push(json!({
+                            "id": d.id,
+                            "similarity": 1.0,
+                            "device": device_json(&d),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) 向量语义结果（补充，跳过已列出的）
     let probe = (k * 8).max(32);
     let hits = s.index.search(&q, probe);
-
-    let mut results = Vec::with_capacity(k);
     for (label, dist) in hits {
         if results.len() >= k {
             break;
         }
+        if !seen_ids.insert(label as u64) {
+            continue;
+        }
         let Ok(Some(d)) = kv.get_device(label) else { continue };
-        if !brand_set.is_empty() && !brand_set.iter().any(|b| *b == d.brand) {
+        if !pass_brand(&d) {
             continue;
         }
         results.push(json!({

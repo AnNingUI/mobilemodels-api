@@ -727,15 +727,16 @@ fn tenaa_window(
     let data = &v["data"];
     let records = data["records"].as_array().cloned().unwrap_or_default();
 
-    // 关键优化：如果返回满 30 条但全是已见过的重复（0 条新增），说明该范围的数据
-    // 已被覆盖（服务端日期过滤不严格，会返回 regDate ≤ endDate 的前 30 条），
-    // 不再拆分，直接跳过——避免在重复数据上无限递归。
-    let new_count = records.iter().filter(|r| {
-        r["equipmentModel"].as_str()
-            .map(|m| !seen.contains(m))
-            .unwrap_or(false)
-    }).count();
-    if records.len() >= 30 && new_count == 0 {
+    // 服务端日期过滤不严格：窗口可能返回 regDate < start 的"陈旧"记录（按注册序取前 30）。
+    // 若返回的 30 条全部落在窗口之前 → 窗口内无新数据，跳过（避免无限递归且不漏数据）；
+    // 只要有任一条在窗口内 → 继续拆分。
+    let any_in_window = records.iter().any(|r| {
+        match r["regDate"].as_str() {
+            Some(d) => d >= start,
+            None => true,
+        }
+    });
+    if records.len() >= 30 && !any_in_window {
         return Ok(());
     }
 

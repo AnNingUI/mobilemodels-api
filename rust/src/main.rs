@@ -38,6 +38,16 @@ fn main() {
     // 必须在任何网络请求（collect）之前执行。
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    let args: Vec<String> = std::env::args().collect();
+    // --version / --help 是查询命令，正常退出（Dockerfile 用 --version 验证二进制）
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("mobilemodels-db {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        usage();
+    }
+
     // Piping into `head`/`cut` closes stdout early — that's a normal CLI
     // condition, not a bug. Swallow the stdio panic it triggers.
     std::panic::set_hook(Box::new(|info| {
@@ -53,10 +63,6 @@ fn main() {
         eprintln!("{info}");
     }));
 
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        usage();
-    }
     let result = match args[1].as_str() {
         "build" => cmd_build(&args[2..]),
         "collect" => cmd_collect(&args[2..]),

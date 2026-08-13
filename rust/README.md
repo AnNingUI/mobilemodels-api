@@ -12,7 +12,7 @@
 Device 记录
    ├─► redb KV（data/mobilemodels.redb）
    │     devices / by_model_id / by_code / by_codename / by_name / by_brand / by_series / vectors
-   └─► HNSW 向量索引（1024 维 n-gram 哈希嵌入，DistCosine）
+   └─► 向量（512 维 n-gram 哈希嵌入；服务端精确线性扫描 + HNSW 供 CLI）
 ```
 
 - **redb**：ACID、MVCC、B+ 树、内存映射，基准接近 RocksDB。

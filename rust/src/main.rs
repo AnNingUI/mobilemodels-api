@@ -415,6 +415,9 @@ fn cmd_serve(args: &[String]) -> Result<()> {
     }
     // 服务端用精确线性扫描：无需构建 HNSW 图，弱 CPU 上秒级启动
     let index = vector::ExactIndex::new(vectors);
+    if let Some((_, v0)) = index.vectors().first() {
+        println!("vector dim: {} (expect {})", v0.len(), embed::DIM);
+    }
     println!("exact vector index ready: {} vectors in {:?}", index.size(), started.elapsed());
 
     let state = std::sync::Arc::new(server::AppState { kv, index });

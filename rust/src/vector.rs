@@ -76,4 +76,9 @@ impl ExactIndex {
     pub fn size(&self) -> usize {
         self.vectors.len()
     }
+
+    /// 暴露内部向量（调试用）
+    pub fn vectors(&self) -> &Vec<(u32, Vec<f32>)> {
+        &self.vectors
+    }
 }

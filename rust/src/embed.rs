@@ -5,7 +5,7 @@
 //! like `A1332` and codenames like `mione_plus`), hashed with FNV-1a into a
 //! fixed-dimension vector and L2-normalized for cosine similarity.
 
-pub const DIM: usize = 1024;
+pub const DIM: usize = 512;
 
 fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64 ^ seed;

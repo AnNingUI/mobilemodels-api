@@ -41,7 +41,7 @@ impl KvStore {
             std::fs::create_dir_all(dir)?;
         }
         // 默认 8KB 页装不下 4KB 向量 → 每页浪费一半；32KB 页可装 7 个，文件显著缩小
-        let db = Database::builder().set_cache_size(64 * 1024 * 1024).create(path)?;
+        let db = Database::builder().set_cache_size(8 * 1024 * 1024).create(path)?;
         Ok(Self { db })
     }
 

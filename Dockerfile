@@ -24,7 +24,7 @@ RUN curl --retry 8 --retry-all-errors --retry-delay 10 -sL \
          echo "ERROR: downloaded file is not an ELF binary (repo 是否 Public？build-release 是否已生成 Release？)" >&2; \
          exit 1; \
        fi \
-    && /usr/local/bin/mobilemodels-db --help >/dev/null&& /usr/local/bin/mobilemodels-db --help >/dev/null /usr/local/bin/mobilemodels-db --version >/dev/null
+    && /usr/local/bin/mobilemodels-db --version >/dev/null
 
 # 数据源：每日工作流提交的 brands/*.json（进网/安卓/苹果/华为）
 COPY brands/ brands/

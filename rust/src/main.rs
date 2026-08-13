@@ -195,8 +195,14 @@ fn cmd_collect(args: &[String]) -> Result<()> {
             let n = collector::collect_tenaa(&path, limit, 200, since.as_deref())?;
             println!("collected {n} devices -> {}", path.display());
         }
+        "wikipedia-huawei-models" => {
+            // 鸿蒙时代华为机型：维基单机型文章 infobox 型号（需代理）
+            let path = PathBuf::from(&out).join("wikipedia-huawei-models.json");
+            let n = collector::collect_wikipedia_huawei_models(&path, limit)?;
+            println!("collected {n} devices -> {}", path.display());
+        }
         other => anyhow::bail!(
-            "unknown source `{other}` (available: google-play, apple, apple-all, wikipedia-huawei, tenaa)"
+            "unknown source `{other}` (available: google-play, apple, apple-all, wikipedia-huawei, wikipedia-huawei-models, tenaa)"
         ),
     }
     Ok(())

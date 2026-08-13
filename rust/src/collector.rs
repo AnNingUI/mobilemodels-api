@@ -943,3 +943,126 @@ mod tests {
         assert_eq!(devices[3]["codename"], "iPhone3,1");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 鸿蒙时代华为机型：维基百科单机型文章 infobox 的 Model 字段
+// 例: Huawei Mate 60 文章 -> "Mate 60: BRA-AL00, Mate 60 Pro: ALN-AL00/ALN-AL80"
+// 枚举来源: Category:Huawei_mobile_phones（分类成员 API）
+// ---------------------------------------------------------------------------
+
+fn extract_huawei_models(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    // 定位 infobox 表格
+    let re_infobox = regex::Regex::new(r#"(?is)<table[^>]*class="[^"]*infobox[^"]*"[^>]*>(.*?)</table>"#).unwrap();
+    let re_model_row = regex::Regex::new(r#"(?is)<th[^>]*>.*?Model.*?</th>\s*<td[^>]*>(.*?)</td>"#).unwrap();
+    let re_code = regex::Regex::new(r#"\b[A-Z]{2,4}-[A-Z]{2}\d{2,3}\b"#).unwrap();
+    if let Some(cap) = re_infobox.captures(html) {
+        let table = cap.get(1).unwrap().as_str();
+        for row in re_model_row.captures_iter(table) {
+            let td = row.get(1).unwrap().as_str();
+            for c in re_code.find_iter(td) {
+                let code = c.as_str().to_string();
+                if !out.contains(&code) {
+                    out.push(code);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 递归枚举分类下所有页面（含子分类），抓取每篇文章的 infobox 型号
+pub fn collect_wikipedia_huawei_models(out_path: &Path, limit: Option<usize>) -> Result<usize> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("mobilemodels-db/0.1 (device-model collector; https://github.com/)")
+        .build()
+        .context("build http client")?;
+
+    // 1) 递归收集分类成员（页面 + 子分类）
+    let mut titles: Vec<String> = Vec::new();
+    let mut seen_titles: HashSet<String> = HashSet::new();
+    let mut seen_cats: HashSet<String> = HashSet::new();
+    let mut stack = vec!["Category:Huawei_mobile_phones".to_string()];
+    while let Some(cat) = stack.pop() {
+        if !seen_cats.insert(cat.clone()) {
+            continue;
+        }
+        let mut cont = String::new();
+        loop {
+            let url = format!(
+                "{WIKI_API}?action=query&list=categorymembers&cmtitle={}&cmlimit=500&cmtype=page%7Csubcat&format=json&formatversion=2{}",
+                percent_encode(&cat),
+                if cont.is_empty() { String::new() } else { format!("&cmcontinue={}", percent_encode(&cont)) }
+            );
+            let Ok(resp) = client.get(&url).send() else { break };
+            let Ok(text) = resp.text() else { break };
+            let Ok(v) = serde_json::from_str::<Value>(&text) else { break };
+            for m in v["query"]["categorymembers"].as_array().cloned().unwrap_or_default() {
+                let title = m["title"].as_str().unwrap_or("").to_string();
+                if title.starts_with("Category:") {
+                    stack.push(title);
+                } else if seen_titles.insert(title.clone()) {
+                    titles.push(title);
+                }
+            }
+            cont = v["continue"]["cmcontinue"].as_str().unwrap_or("").to_string();
+            if cont.is_empty() {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    // 过滤掉非机型页面
+    titles.retain(|t| {
+        !t.starts_with("List of")
+            && !t.contains("Mobile Services")
+            && !t.contains("Smartphone")
+    });
+    println!("  category tree pages: {}", titles.len());
+
+    // 2) 逐篇抓取 infobox 型号
+    let mut devices: Vec<Value> = Vec::new();
+    let mut seen = HashSet::new();
+    for (i, title) in titles.iter().enumerate() {
+        if let Some(l) = limit {
+            if devices.len() >= l {
+                break;
+            }
+        }
+        let url = format!(
+            "{WIKI_API}?action=parse&page={}&prop=text&format=json&formatversion=2",
+            percent_encode(title)
+        );
+        let Ok(resp) = client.get(&url).send() else { continue };
+        let Ok(text) = resp.text() else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+        let Some(html) = v["parse"]["text"].as_str() else { continue };
+        let codes = extract_huawei_models(html);
+        if codes.is_empty() {
+            continue;
+        }
+        let name = title
+            .trim_start_matches("Huawei ")
+            .trim_start_matches("HUAWEI ")
+            .to_string();
+        let key = codes.join("|");
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        devices.push(json!({
+            "brand": "华为 (Huawei)",
+            "name": name,
+            "series": "维基百科",
+            "models": [{ "ids": codes, "market_name": name }],
+        }));
+        if i % 20 == 0 {
+            println!("  ... {}/{} articles ({} devices)", i + 1, titles.len(), devices.len());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    if let Some(dir) = out_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out_path, serde_json::to_vec(&devices)?)?;
+    Ok(devices.len())
+}

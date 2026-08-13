@@ -14,6 +14,7 @@ hnsw_rs = "0.3"
 anndists = "0.1"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+regex = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"] }
